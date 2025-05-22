@@ -579,12 +579,12 @@ def main():
     
     # Add credit line below title
     st.markdown(
-    """
-    <div style='position: fixed; bottom: 20px; left: 20px; color: #666; font-size: 18px; font-weight: bold; z-index: 1000;'>
-        <em>Designed and Developed by Agilomatrix</em>
-    </div>
-    """ 
-    unsafe_allow_html=True
+        """
+        <div style='position: fixed; bottom: 20px; left: 20px; color: #666; font-size: 18px; font-weight: bold; z-index: 1000;'>
+            <em>Designed and Developed by Agilomatrix</em>
+        </div>
+        """, 
+        unsafe_allow_html=True
     )
     
     st.markdown("Generate professional sticker labels with QR codes from your Excel/CSV data")
