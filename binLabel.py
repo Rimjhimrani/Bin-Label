@@ -1,4 +1,13 @@
 import streamlit as st
+
+# This must be the very first Streamlit command
+st.set_page_config(
+    page_title="Bin Label Generator",
+    page_icon="🏷️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import pandas as pd
 import os
 from reportlab.lib.pagesizes import landscape
@@ -22,27 +31,56 @@ STICKER_PAGESIZE = (STICKER_WIDTH, STICKER_HEIGHT)
 CONTENT_BOX_WIDTH = 10 * cm  # Same width as page
 CONTENT_BOX_HEIGHT = 7.2 * cm  # Half the page height
 
-# Check for PIL and install if needed
-try:
-    from PIL import Image as PILImage
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-    st.warning("PIL not available. Installing...")
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pillow'])
-    from PIL import Image as PILImage
-    PIL_AVAILABLE = True
+# Function to install packages if needed
+def install_if_needed(package_name, import_name=None):
+    """Install package if not available"""
+    if import_name is None:
+        import_name = package_name
+    
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        try:
+            st.warning(f"Installing {package_name}...")
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', package_name])
+            return True
+        except Exception as e:
+            st.error(f"Failed to install {package_name}: {e}")
+            return False
 
-# Check for QR code library and install if needed
+# Check and install required packages
+def check_dependencies():
+    """Check and install required packages"""
+    packages = [
+        ('pillow', 'PIL'),
+        ('qrcode', 'qrcode'),
+        ('reportlab', 'reportlab'),
+        ('openpyxl', 'openpyxl')
+    ]
+    
+    all_installed = True
+    for package, import_name in packages:
+        if not install_if_needed(package, import_name):
+            all_installed = False
+    
+    return all_installed
+
+# Import PIL and qrcode after ensuring they're installed
+PIL_AVAILABLE = False
+QR_AVAILABLE = False
+
+try:
+    from PIL import Image as PILImage
+    PIL_AVAILABLE = True
+except ImportError:
+    pass
+
 try:
     import qrcode
     QR_AVAILABLE = True
 except ImportError:
-    QR_AVAILABLE = False
-    st.warning("qrcode not available. Installing...")
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'qrcode'])
-    import qrcode
-    QR_AVAILABLE = True
+    pass
 
 # Define paragraph styles
 bold_style = ParagraphStyle(name='Bold', fontName='Helvetica-Bold', fontSize=16, alignment=TA_CENTER, leading=14)
@@ -53,6 +91,9 @@ def generate_qr_code(data_string):
     """
     Generate a QR code from the given data string
     """
+    if not QR_AVAILABLE:
+        return None
+        
     try:
         # Create QR code instance
         qr = qrcode.QRCode(
@@ -431,12 +472,24 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
         return None
 
 def main():
-    st.set_page_config(
-        page_title="Bin Label Generator",
-        page_icon="🏷️",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+    # Check dependencies first
+    if not check_dependencies():
+        st.error("Failed to install required dependencies. Please check your environment.")
+        return
+    
+    # Re-import after ensuring packages are available
+    global PIL_AVAILABLE, QR_AVAILABLE
+    try:
+        from PIL import Image as PILImage
+        PIL_AVAILABLE = True
+    except ImportError:
+        PIL_AVAILABLE = False
+        
+    try:
+        import qrcode
+        QR_AVAILABLE = True
+    except ImportError:
+        QR_AVAILABLE = False
     
     st.title("🏷️ Bin Label Generator")
     st.markdown("Generate professional sticker labels with QR codes from your Excel/CSV data")
@@ -608,13 +661,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    # Try to install required packages if not available
-    required_packages = ['reportlab', 'pandas', 'openpyxl', 'xlrd', 'pillow', 'qrcode']
-    for package in required_packages:
-        try:
-            __import__(package)
-        except ImportError:
-            st.warning(f"Installing {package}...")
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
-    
     main()
