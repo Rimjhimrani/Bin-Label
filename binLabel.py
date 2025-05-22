@@ -583,7 +583,7 @@ def main():
     <div style='position: fixed; bottom: 20px; left: 20px; color: #666; font-size: 18px; font-weight: bold; z-index: 1000;'>
         <em>Designed and Developed by Agilomatrix</em>
     </div>
-    """, 
+    """ 
     unsafe_allow_html=True
     )
     
