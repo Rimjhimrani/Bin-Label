@@ -21,6 +21,7 @@ from io import BytesIO
 import subprocess
 import sys
 import tempfile
+import re
 
 # Define sticker dimensions
 STICKER_WIDTH = 10 * cm
@@ -145,6 +146,82 @@ def parse_location_string(location_str):
 
     return location_parts
 
+def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
+    """
+    Detect bus model and return quantity for the appropriate model
+    Returns a dictionary with keys '7M', '9M', '12M' and their respective quantities
+    """
+    # Initialize result dictionary
+    result = {'7M': '', '9M': '', '12M': ''}
+    
+    # Get quantity value
+    qty_veh = ""
+    if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
+        qty_veh = str(row[qty_veh_col])
+    
+    if not qty_veh:
+        return result
+    
+    # Method 1: Check if there's a dedicated bus model column
+    bus_model = ""
+    if bus_model_col and bus_model_col in row and pd.notna(row[bus_model_col]):
+        bus_model = str(row[bus_model_col]).upper()
+    
+    # Method 2: Check if bus model is embedded in the qty_veh value itself
+    # Look for patterns like "7M:5", "9M-3", "12M 2", etc.
+    qty_pattern = r'(\d+M)[:\-\s]*(\d+)'
+    matches = re.findall(qty_pattern, qty_veh.upper())
+    
+    if matches:
+        # If we found model-quantity pairs in the qty_veh field
+        for model, quantity in matches:
+            if model in result:
+                result[model] = quantity
+    elif bus_model:
+        # If we have a separate bus model column, use that
+        if '7M' in bus_model or '7' in bus_model:
+            result['7M'] = qty_veh
+        elif '9M' in bus_model or '9' in bus_model:
+            result['9M'] = qty_veh
+        elif '12M' in bus_model or '12' in bus_model:
+            result['12M'] = qty_veh
+    else:
+        # Method 3: Try to infer from other columns or default behavior
+        # Check if any other column contains bus model information
+        for col_name, value in row.items():
+            if pd.notna(value):
+                value_str = str(value).upper()
+                if '7M' in value_str:
+                    result['7M'] = qty_veh
+                    break
+                elif '9M' in value_str:
+                    result['9M'] = qty_veh
+                    break
+                elif '12M' in value_str:
+                    result['12M'] = qty_veh
+                    break
+        
+        # If no model detected, check for numeric patterns that might indicate model
+        if not any(result.values()):
+            # Look for common patterns in part numbers or descriptions that might indicate bus model
+            part_desc = ""
+            for col in row.index:
+                if any(keyword in str(col).upper() for keyword in ['PART', 'DESC', 'NAME']):
+                    if pd.notna(row[col]):
+                        part_desc += str(row[col]).upper() + " "
+            
+            if '7M' in part_desc or '7 M' in part_desc:
+                result['7M'] = qty_veh
+            elif '9M' in part_desc or '9 M' in part_desc:
+                result['9M'] = qty_veh
+            elif '12M' in part_desc or '12 M' in part_desc:
+                result['12M'] = qty_veh
+            else:
+                # Default: if no model detected, assume it's for the most common model (9M)
+                result['9M'] = qty_veh
+    
+    return result
+
 def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None, status_placeholder=None):
     """Generate sticker labels with QR code from Excel data"""
     if status_placeholder:
@@ -206,7 +283,7 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
     
     # If no specific QTY/BIN column is found, fall back to general QTY column
     if not qty_bin_col:
-        qty_bin_col = next((col for col in cols if 'QTY' in col),
+        qty_bin_col = next((col for col in cols if 'QTY' in col and 'VEH' not in col and 'BUS' not in col),
                       next((col for col in cols if 'QUANTITY' in col), None))
   
     loc_col = next((col for col in cols if 'LOC' in col or 'POS' in col or 'LOCATION' in col),
@@ -214,6 +291,9 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
 
     # Improved detection of QTY/VEH column
     qty_veh_col = next((col for col in cols if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH', 'QTYPERCAR', 'QTYCAR', 'QTY/CAR'])), None)
+
+    # Look for bus model column
+    bus_model_col = next((col for col in cols if any(term in col for term in ['BUS', 'MODEL', 'VEHICLE', 'TYPE'])), None)
 
     # Look for store location column
     store_loc_col = next((col for col in cols if 'STORE' in col and 'LOC' in col),
@@ -223,6 +303,8 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
         st.info(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Location: {loc_col}, Qty/Bin: {qty_bin_col}")
         if qty_veh_col:
             st.info(f"Qty/Veh Column: {qty_veh_col}")
+        if bus_model_col:
+            st.info(f"Bus Model Column: {bus_model_col}")
         if store_loc_col:
             st.info(f"Store Location Column: {store_loc_col}")
 
@@ -256,10 +338,8 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
         if qty_bin_col and qty_bin_col in row and pd.notna(row[qty_bin_col]):
             qty_bin = str(row[qty_bin_col])
             
-        # Extract QTY/VEH properly
-        qty_veh = ""
-        if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
-            qty_veh = str(row[qty_veh_col])
+        # Detect bus model and get quantities for each model
+        bus_model_quantities = detect_bus_model_and_qty(row, qty_veh_col, bus_model_col)
         
         location_str = str(row[loc_col]) if loc_col and loc_col in row else ""
         store_location = str(row[store_loc_col]) if store_loc_col and store_loc_col in row else ""
@@ -267,7 +347,11 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
 
         # Generate QR code with part information
         qr_data = f"Part No: {part_no}\nDescription: {desc}\nLocation: {location_str}\n"
-        qr_data += f"Store Location: {store_location}\nQTY/VEH: {qty_veh}\nQTY/BIN: {qty_bin}"
+        qr_data += f"Store Location: {store_location}\n"
+        for model, qty in bus_model_quantities.items():
+            if qty:
+                qr_data += f"{model}: {qty}\n"
+        qr_data += f"QTY/BIN: {qty_bin}"
         
         qr_image = generate_qr_code(qr_data)
         
@@ -383,14 +467,14 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
         # Add smaller spacer between line location and bottom section
         elements.append(Spacer(1, 0.3*cm))
 
-        # Bottom section - Restructured for better layout in smaller space
+        # Bottom section - Bus model boxes with smart quantity placement
         mtm_box_width = 1.2*cm
         mtm_row_height = 1.5*cm
 
-        # Only put qty_veh in the 9M column
+        # Use the detected bus model quantities
         position_matrix_data = [
             ["7M", "9M", "12M"],
-            ["", "", f"{qty_veh}"]
+            [bus_model_quantities['7M'], bus_model_quantities['9M'], bus_model_quantities['12M']]
         ]
 
         mtm_table = Table(
@@ -492,6 +576,17 @@ def main():
         QR_AVAILABLE = False
     
     st.title("🏷️ Bin Label Generator")
+    
+    # Add credit line below title
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; font-size: 14px; margin-top: -10px; margin-bottom: 20px;'>
+            <em>Designed and Developed by Agilomatrix</em>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
     st.markdown("Generate professional sticker labels with QR codes from your Excel/CSV data")
     
     # Sidebar for file upload
@@ -609,39 +704,8 @@ def main():
             st.markdown("""
             **Features:**
             - ✅ Automatic QR code generation
-            - ✅ Professional sticker layout
-            - ✅ Support for Excel/CSV files
-            - ✅ Customizable content boxes
-            - ✅ Border frame design
-            
-            **Supported Columns:**
-            - Part Number/Part No
-            - Description/Name
-            - Location/Position
-            - Qty/Bin, Qty/Veh
-            - Store Location
-            """)
-    
-    else:
-        # Welcome screen
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col2:
-            st.markdown("""
-            ### 🚀 Welcome to Bin Label Generator
-            
-            This application helps you create professional sticker labels with QR codes from your Excel or CSV data.
-            
-            **How to use:**
-            1. 📤 Upload your Excel/CSV file using the sidebar
-            2. 👁️ Preview your data to ensure it's correct
-            3. 🚀 Click "Generate Sticker Labels" to create your PDF
-            4. 📥 Download your generated sticker labels
-            
-            **Features:**
-            - ✨ Automatic QR code generation from part information
-            - 🎨 Professional layout with bordered content boxes
+            - ✅ Smart bus model detection (7M, 9M, 12M)
+            - ✅ Professional sticker layout with bordered content boxes
             - 📊 Support for multiple data formats (Excel, CSV)
             - 🔍 Smart column detection for part numbers, descriptions, locations, and quantities
             - 📱 Mobile-friendly interface
