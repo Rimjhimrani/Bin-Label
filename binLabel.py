@@ -580,7 +580,7 @@ def main():
     # Add credit line below title
     st.markdown(
         """
-        <div style='position: fixed; bottom: 20px; left: 20px; color: #666; font-size: 18px; font-weight: bold; z-index: 1000;'>
+        <div style='text-align: center; color: #666; font-size: 14px; margin-top: -10px; margin-bottom: 20px;'>
             <em>Designed and Developed by Agilomatrix</em>
         </div>
         """, 
