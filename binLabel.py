@@ -159,6 +159,50 @@ def parse_location_string(location_str):
 
     return location_parts
 
+def extract_bus_model_quantities(row, bus_model_columns):
+    """
+    Extract quantities for 7M, 9M, and 12M based on bus model columns
+    Returns a dictionary with keys '7M', '9M', '12M' and their respective quantities
+    """
+    quantities = {'7M': '', '9M': '', '12M': ''}
+    
+    for col_name, col_data in bus_model_columns.items():
+        if col_data and col_name in row and pd.notna(row[col_name]):
+            qty_value = str(row[col_name]).strip()
+            if qty_value and qty_value != '0' and qty_value.lower() != 'nan':
+                quantities[col_data] = qty_value
+    
+    return quantities
+
+def detect_bus_model_columns(df_columns):
+    """
+    Detect columns that contain bus model information (7M, 9M, 12M)
+    Returns a dictionary mapping column names to bus models
+    """
+    bus_model_columns = {}
+    
+    for col in df_columns:
+        col_upper = str(col).upper()
+        
+        # Check for various patterns that might indicate bus models
+        if '7M' in col_upper or '7 M' in col_upper or 'SEVEN' in col_upper:
+            bus_model_columns[col] = '7M'
+        elif '9M' in col_upper or '9 M' in col_upper or 'NINE' in col_upper:
+            bus_model_columns[col] = '9M'
+        elif '12M' in col_upper or '12 M' in col_upper or 'TWELVE' in col_upper:
+            bus_model_columns[col] = '12M'
+        elif 'QTY/VEH' in col_upper or 'QTY_VEH' in col_upper:
+            # If there's a generic QTY/VEH column, we might need to determine which model it applies to
+            # For now, we'll check if there are specific model indicators in the column name
+            if '7' in col_upper:
+                bus_model_columns[col] = '7M'
+            elif '9' in col_upper:
+                bus_model_columns[col] = '9M'
+            elif '12' in col_upper:
+                bus_model_columns[col] = '12M'
+    
+    return bus_model_columns
+
 def generate_sticker_labels(df, progress_bar=None, status_container=None):
     """Generate sticker labels with QR code from DataFrame"""
     
@@ -200,14 +244,14 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
     
     # If no specific QTY/BIN column is found, fall back to general QTY column
     if not qty_bin_col:
-        qty_bin_col = next((col for col in cols if 'QTY' in col),
+        qty_bin_col = next((col for col in cols if 'QTY' in col and 'VEH' not in col),
                       next((col for col in cols if 'QUANTITY' in col), None))
   
     loc_col = next((col for col in cols if 'LOC' in col or 'POS' in col or 'LOCATION' in col),
                    cols[2] if len(cols) > 2 else desc_col)
 
-    # Improved detection of QTY/VEH column
-    qty_veh_col = next((col for col in cols if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH', 'QTYPERCAR', 'QTYCAR', 'QTY/CAR'])), None)
+    # Detect bus model columns
+    bus_model_columns = detect_bus_model_columns(cols)
 
     # Look for store location column
     store_loc_col = next((col for col in cols if 'STORE' in col and 'LOC' in col),
@@ -219,8 +263,8 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         status_container.write(f"- Description: {desc_col}")
         status_container.write(f"- Location: {loc_col}")
         status_container.write(f"- Qty/Bin: {qty_bin_col}")
-        if qty_veh_col:
-            status_container.write(f"- Qty/Veh: {qty_veh_col}")
+        if bus_model_columns:
+            status_container.write(f"- Bus Model Columns: {bus_model_columns}")
         if store_loc_col:
             status_container.write(f"- Store Location: {store_loc_col}")
 
@@ -255,10 +299,8 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         if qty_bin_col and qty_bin_col in row and pd.notna(row[qty_bin_col]):
             qty_bin = str(row[qty_bin_col])
             
-        # Extract QTY/VEH properly
-        qty_veh = ""
-        if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
-            qty_veh = str(row[qty_veh_col])
+        # Extract bus model quantities
+        bus_quantities = extract_bus_model_quantities(row, bus_model_columns)
         
         location_str = str(row[loc_col]) if loc_col and loc_col in row else ""
         store_location = str(row[store_loc_col]) if store_loc_col and store_loc_col in row else ""
@@ -266,7 +308,9 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
 
         # Generate QR code with part information
         qr_data = f"Part No: {part_no}\nDescription: {desc}\nLocation: {location_str}\n"
-        qr_data += f"Store Location: {store_location}\nQTY/VEH: {qty_veh}\nQTY/BIN: {qty_bin}"
+        qr_data += f"Store Location: {store_location}\n"
+        qr_data += f"7M Qty: {bus_quantities['7M']}\n9M Qty: {bus_quantities['9M']}\n12M Qty: {bus_quantities['12M']}\n"
+        qr_data += f"QTY/BIN: {qty_bin}"
         
         qr_image = generate_qr_code(qr_data)
         
@@ -382,16 +426,24 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         # Add smaller spacer between line location and bottom section
         elements.append(Spacer(1, 0.3*cm))
 
-        # Bottom section - Restructured for better layout in smaller space
+        # Bottom section - Bus model quantities with appropriate placement
         mtm_box_width = 1.2*cm
         mtm_row_height = 1.5*cm
 
-        # Only put qty_veh in the 9M column with bold formatting
+        # Create position matrix with bus model quantities in appropriate boxes
         position_matrix_data = [
             ["7M", "9M", "12M"],
-            ["", "",Paragraph(f"<b>{qty_veh}</b>", ParagraphStyle(
-                name='BoldQtyVeh', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
-            )) ]
+            [
+                Paragraph(f"<b>{bus_quantities['7M']}</b>", ParagraphStyle(
+                    name='Bold7M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                )) if bus_quantities['7M'] else "",
+                Paragraph(f"<b>{bus_quantities['9M']}</b>", ParagraphStyle(
+                    name='Bold9M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                )) if bus_quantities['9M'] else "",
+                Paragraph(f"<b>{bus_quantities['12M']}</b>", ParagraphStyle(
+                    name='Bold12M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                )) if bus_quantities['12M'] else ""
+            ]
         ]
 
         mtm_table = Table(
@@ -500,7 +552,7 @@ def main():
         - Quantity/Bin (QTY/BIN, QTY, etc.)
         
         **Optional Columns:**
-        - QTY/VEH (Quantity per vehicle)
+        - Bus Model Quantities (7M, 9M, 12M columns)
         - Store Location
         """)
         
@@ -508,6 +560,7 @@ def main():
         st.markdown("""
         - **Automatic QR Code Generation**
         - **Smart Description Sizing**
+        - **Bus Model Support (7M/9M/12M)**
         - **Professional Layout**
         - **Border Box Design**
         - **Multiple File Formats**
@@ -594,14 +647,16 @@ def main():
             'DESCRIPTION': ['Engine Oil Filter', 'Brake Pad Set', 'Air Filter'],
             'LOCATION': ['A1_B2_C3', 'D4_E5_F6', 'G7_H8_I9'],
             'QTY/BIN': ['10', '5', '8'],
-            'QTY/VEH': ['1', '2', '1'],
+            '7M': ['', '2', '1'],
+            '9M': ['1', '', '1'],
+            '12M': ['1', '4', ''],
             'STORE LOCATION': ['MAIN_STORE', 'BRANCH_A', 'MAIN_STORE']
         }
         
         sample_df = pd.DataFrame(sample_data)
         st.dataframe(sample_df, use_container_width=True)
         
-        st.info("💡 Your data should follow a similar structure. Column names are case-insensitive.")
+        st.info("💡 Your data should follow a similar structure. The system will automatically detect bus model columns (7M, 9M, 12M).")
         
         # Label preview
         st.header("👁️ Label Preview")
@@ -613,7 +668,7 @@ def main():
         - **Store Location** (7 segments)
         - **Line Location** (7 segments)  
         - **QR Code** with all part info
-        - **MTM boxes** (7M, 9M, 12M)
+        - **MTM boxes** (7M, 9M, 12M with respective quantities)
         """)
 
 if __name__ == "__main__":
