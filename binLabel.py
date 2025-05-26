@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import base64
+import re
 
 # Define sticker dimensions
 STICKER_WIDTH = 10 * cm
@@ -149,7 +150,6 @@ def parse_location_string(location_str):
     location_str = location_str.strip()
 
     # Try to parse location components
-    import re
     pattern = r'([^_\s]+)'
     matches = re.findall(pattern, location_str)
 
@@ -159,6 +159,39 @@ def parse_location_string(location_str):
 
     return location_parts
 
+def detect_bus_model_columns(df_columns):
+    """
+    Improved bus model column detection with better pattern matching
+    Returns a dictionary mapping column names to bus models
+    """
+    bus_model_columns = {}
+    
+    for col in df_columns:
+        col_str = str(col).strip()
+        col_upper = col_str.upper()
+        
+        # More precise pattern matching to avoid false positives
+        # Check for 7M patterns
+        if re.search(r'\b7\s*M\b', col_upper) or re.search(r'\bSEVEN\s*M\b', col_upper):
+            bus_model_columns[col] = '7M'
+        # Check for 9M patterns  
+        elif re.search(r'\b9\s*M\b', col_upper) or re.search(r'\bNINE\s*M\b', col_upper):
+            bus_model_columns[col] = '9M'
+        # Check for 12M patterns
+        elif re.search(r'\b12\s*M\b', col_upper) or re.search(r'\bTWELVE\s*M\b', col_upper):
+            bus_model_columns[col] = '12M'
+        # Handle QTY/VEH columns with specific bus model indicators
+        elif 'QTY' in col_upper and 'VEH' in col_upper:
+            # Check which bus model this QTY/VEH column refers to
+            if re.search(r'\b7\b', col_upper) and not re.search(r'\b12\b', col_upper):
+                bus_model_columns[col] = '7M'
+            elif re.search(r'\b9\b', col_upper):
+                bus_model_columns[col] = '9M'
+            elif re.search(r'\b12\b', col_upper):
+                bus_model_columns[col] = '12M'
+    
+    return bus_model_columns
+
 def extract_bus_model_quantities(row, bus_model_columns):
     """
     Extract quantities for 7M, 9M, and 12M based on bus model columns
@@ -166,42 +199,18 @@ def extract_bus_model_quantities(row, bus_model_columns):
     """
     quantities = {'7M': '', '9M': '', '12M': ''}
     
-    for col_name, col_data in bus_model_columns.items():
-        if col_data and col_name in row and pd.notna(row[col_name]):
+    # Debug: Print column mapping for troubleshooting
+    if hasattr(st, 'session_state') and 'debug_mode' in st.session_state and st.session_state.debug_mode:
+        st.write(f"Bus model columns detected: {bus_model_columns}")
+    
+    for col_name, bus_model in bus_model_columns.items():
+        if col_name in row and pd.notna(row[col_name]):
             qty_value = str(row[col_name]).strip()
-            if qty_value and qty_value != '0' and qty_value.lower() != 'nan':
-                quantities[col_data] = qty_value
+            # Only add non-zero, non-empty values
+            if qty_value and qty_value not in ['0', '0.0', 'nan', 'NaN', '']:
+                quantities[bus_model] = qty_value
     
     return quantities
-
-def detect_bus_model_columns(df_columns):
-    """
-    Detect columns that contain bus model information (7M, 9M, 12M)
-    Returns a dictionary mapping column names to bus models
-    """
-    bus_model_columns = {}
-    
-    for col in df_columns:
-        col_upper = str(col).upper()
-        
-        # Check for various patterns that might indicate bus models
-        if '7M' in col_upper or '7 M' in col_upper or 'SEVEN' in col_upper:
-            bus_model_columns[col] = '7M'
-        elif '9M' in col_upper or '9 M' in col_upper or 'NINE' in col_upper:
-            bus_model_columns[col] = '9M'
-        elif '12M' in col_upper or '12 M' in col_upper or 'TWELVE' in col_upper:
-            bus_model_columns[col] = '12M'
-        elif 'QTY/VEH' in col_upper or 'QTY_VEH' in col_upper:
-            # If there's a generic QTY/VEH column, we might need to determine which model it applies to
-            # For now, we'll check if there are specific model indicators in the column name
-            if '7' in col_upper:
-                bus_model_columns[col] = '7M'
-            elif '9' in col_upper:
-                bus_model_columns[col] = '9M'
-            elif '12' in col_upper:
-                bus_model_columns[col] = '12M'
-    
-    return bus_model_columns
 
 def generate_sticker_labels(df, progress_bar=None, status_container=None):
     """Generate sticker labels with QR code from DataFrame"""
@@ -228,34 +237,41 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         canvas.restoreState()
 
     # Identify columns (case-insensitive)
+    original_columns = df.columns.tolist()
     df.columns = [col.upper() if isinstance(col, str) else col for col in df.columns]
     cols = df.columns.tolist()
 
     # Find relevant columns
-    part_no_col = next((col for col in cols if 'PART' in col and ('NO' in col or 'NUM' in col or '#' in col)),
+    part_no_col = next((col for col in cols if 'PART' in str(col) and ('NO' in str(col) or 'NUM' in str(col) or '#' in str(col))),
                    next((col for col in cols if col in ['PARTNO', 'PART']), cols[0]))
 
-    desc_col = next((col for col in cols if 'DESC' in col),
-                   next((col for col in cols if 'NAME' in col), cols[1] if len(cols) > 1 else part_no_col))
+    desc_col = next((col for col in cols if 'DESC' in str(col)),
+                   next((col for col in cols if 'NAME' in str(col)), cols[1] if len(cols) > 1 else part_no_col))
 
     # Look specifically for "QTY/BIN" column first, then fall back to general QTY column
-    qty_bin_col = next((col for col in cols if 'QTY/BIN' in col or 'QTY_BIN' in col or 'QTYBIN' in col), 
-                  next((col for col in cols if 'QTY' in col and 'BIN' in col), None))
+    qty_bin_col = next((col for col in cols if 'QTY/BIN' in str(col) or 'QTY_BIN' in str(col) or 'QTYBIN' in str(col)), 
+                  next((col for col in cols if 'QTY' in str(col) and 'BIN' in str(col)), None))
     
     # If no specific QTY/BIN column is found, fall back to general QTY column
     if not qty_bin_col:
-        qty_bin_col = next((col for col in cols if 'QTY' in col and 'VEH' not in col),
-                      next((col for col in cols if 'QUANTITY' in col), None))
+        qty_bin_col = next((col for col in cols if 'QTY' in str(col) and 'VEH' not in str(col)),
+                      next((col for col in cols if 'QUANTITY' in str(col)), None))
   
-    loc_col = next((col for col in cols if 'LOC' in col or 'POS' in col or 'LOCATION' in col),
+    loc_col = next((col for col in cols if 'LOC' in str(col) or 'POS' in str(col) or 'LOCATION' in str(col)),
                    cols[2] if len(cols) > 2 else desc_col)
 
-    # Detect bus model columns
-    bus_model_columns = detect_bus_model_columns(cols)
+    # Detect bus model columns using original column names to preserve case sensitivity
+    bus_model_columns = detect_bus_model_columns(original_columns)
+    
+    # Convert bus model column keys to uppercase for consistency
+    bus_model_columns_upper = {}
+    for orig_col, bus_model in bus_model_columns.items():
+        upper_col = orig_col.upper() if isinstance(orig_col, str) else orig_col
+        bus_model_columns_upper[upper_col] = bus_model
 
     # Look for store location column
-    store_loc_col = next((col for col in cols if 'STORE' in col and 'LOC' in col),
-                      next((col for col in cols if 'STORELOCATION' in col), None))
+    store_loc_col = next((col for col in cols if 'STORE' in str(col) and 'LOC' in str(col)),
+                      next((col for col in cols if 'STORELOCATION' in str(col)), None))
 
     if status_container:
         status_container.write(f"**Column Mapping:**")
@@ -263,8 +279,8 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         status_container.write(f"- Description: {desc_col}")
         status_container.write(f"- Location: {loc_col}")
         status_container.write(f"- Qty/Bin: {qty_bin_col}")
-        if bus_model_columns:
-            status_container.write(f"- Bus Model Columns: {bus_model_columns}")
+        if bus_model_columns_upper:
+            status_container.write(f"- Bus Model Columns: {bus_model_columns_upper}")
         if store_loc_col:
             status_container.write(f"- Store Location: {store_loc_col}")
 
@@ -300,7 +316,7 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
             qty_bin = str(row[qty_bin_col])
             
         # Extract bus model quantities
-        bus_quantities = extract_bus_model_quantities(row, bus_model_columns)
+        bus_quantities = extract_bus_model_quantities(row, bus_model_columns_upper)
         
         location_str = str(row[loc_col]) if loc_col and loc_col in row else ""
         store_location = str(row[store_loc_col]) if store_loc_col and store_loc_col in row else ""
@@ -536,6 +552,11 @@ def main():
     st.title("🏷️ Bin Label Generator")
     st.markdown("Generate professional bin labels with QR codes from your Excel/CSV data")
     
+    # Add debug mode toggle
+    debug_mode = st.sidebar.checkbox("Debug Mode", help="Enable to see bus model column detection details")
+    if debug_mode:
+        st.session_state.debug_mode = True
+    
     # Sidebar for information
     with st.sidebar:
         st.header("📋 Instructions")
@@ -551,16 +572,17 @@ def main():
         - Location (LOC, LOCATION, etc.)
         - Quantity/Bin (QTY/BIN, QTY, etc.)
         
-        **Optional Columns:**
-        - Bus Model Quantities (7M, 9M, 12M columns)
-        - Store Location
+        **Bus Model Columns:**
+        - Columns containing "7M", "9M", or "12M"
+        - QTY/VEH columns with bus model indicators
+        - Will be automatically detected and mapped
         """)
         
         st.header("✨ Features")
         st.markdown("""
+        - **Improved Bus Model Detection**
         - **Automatic QR Code Generation**
         - **Smart Description Sizing**
-        - **Bus Model Support (7M/9M/12M)**
         - **Professional Layout**
         - **Border Box Design**
         - **Multiple File Formats**
@@ -590,6 +612,16 @@ def main():
                 # Display file information
                 st.subheader("📊 Data Preview")
                 st.write(f"**Columns found:** {', '.join(df.columns.tolist())}")
+                
+                # Show bus model column detection if debug mode is on
+                if debug_mode:
+                    bus_model_cols = detect_bus_model_columns(df.columns.tolist())
+                    if bus_model_cols:
+                        st.write("**🚌 Bus Model Columns Detected:**")
+                        for col, model in bus_model_cols.items():
+                            st.write(f"- {col} → {model}")
+                    else:
+                        st.write("**🚌 No Bus Model Columns Detected**")
                 
                 # Show first few rows
                 st.dataframe(df.head(10), use_container_width=True)
@@ -626,50 +658,58 @@ def main():
                                 use_container_width=True
                             )
                             
-                            # Clean up temp file
+                            # Clean up temporary file
                             try:
                                 os.unlink(pdf_file)
                             except:
                                 pass
                         else:
-                            st.error("❌ Failed to generate labels. Please check your data format.")
-                
+                            st.error("❌ Failed to generate PDF. Please check your data and try again.")
+            
             except Exception as e:
                 st.error(f"❌ Error reading file: {str(e)}")
-                st.info("Please make sure your file is a valid Excel (.xlsx, .xls) or CSV file.")
+                st.info("Please ensure your file is a valid Excel (.xlsx, .xls) or CSV (.csv) file.")
     
     with col2:
         st.header("📋 Sample Data Format")
-        
-        # Show sample data structure
-        sample_data = {
-            'PART NO': ['ABC123', 'DEF456', 'GHI789'],
-            'DESCRIPTION': ['Engine Oil Filter', 'Brake Pad Set', 'Air Filter'],
-            'LOCATION': ['A1_B2_C3', 'D4_E5_F6', 'G7_H8_I9'],
-            'QTY/BIN': ['10', '5', '8'],
-            '7M': ['', '2', '1'],
-            '9M': ['1', '', '1'],
-            '12M': ['1', '4', ''],
-            'STORE LOCATION': ['MAIN_STORE', 'BRANCH_A', 'MAIN_STORE']
-        }
-        
-        sample_df = pd.DataFrame(sample_data)
-        st.dataframe(sample_df, use_container_width=True)
-        
-        st.info("💡 Your data should follow a similar structure. The system will automatically detect bus model columns (7M, 9M, 12M).")
-        
-        # Label preview
-        st.header("👁️ Label Preview")
         st.markdown("""
-        Each label will contain:
+        **Example CSV structure:**
+        ```
+        Part No,Description,Location,QTY/BIN,7M QTY,9M QTY,12M QTY,Store Location
+        P001,Engine Filter,A1_B2_C3,5,2,1,2,ST01_R1_S2
+        P002,Brake Pad Set,B1_C2_D3,3,1,1,1,ST02_R2_S1
+        ```
+        
+        The system will automatically:
+        - Detect part number columns
+        - Find description fields  
+        - Identify location information
+        - Map bus model quantities (7M, 9M, 12M)
+        - Generate QR codes with all part info
+        """)
+        
+        st.header("🎯 Label Layout")
+        st.markdown("""
+        Each label contains:
         - **Part Number** (bold header)
         - **Description** (auto-sized text)
-        - **Quantity per Bin**
-        - **Store Location** (7 segments)
-        - **Line Location** (7 segments)  
-        - **QR Code** with all part info
-        - **MTM boxes** (7M, 9M, 12M with respective quantities)
+        - **Quantity/Bin** information
+        - **Store Location** (7 column grid)
+        - **Line Location** (7 column grid)
+        - **Bus Model Quantities** (7M, 9M, 12M boxes)
+        - **QR Code** with all part information
         """)
+
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; padding: 20px;'>
+            <p>🏷️ Professional Bin Label Generator | Built with Streamlit & ReportLab</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
