@@ -169,13 +169,24 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
         
         # If we have a dedicated bus model column, use it to determine which MTM box to fill
         if bus_model:
-            if '7M' in bus_model or bus_model == '7':
+            # More precise matching - look for exact patterns
+            if bus_model == '7M' or bus_model == '7':
                 result['7M'] = qty_veh
                 return result
-            elif '9M' in bus_model or bus_model == '9':
+            elif bus_model == '9M' or bus_model == '9':
                 result['9M'] = qty_veh
                 return result
-            elif '12M' in bus_model or bus_model == '12':
+            elif bus_model == '12M' or bus_model == '12':
+                result['12M'] = qty_veh
+                return result
+            # Check for patterns like "BUS 9M" or "9M BUS"
+            elif re.search(r'\b7M\b', bus_model):
+                result['7M'] = qty_veh
+                return result
+            elif re.search(r'\b9M\b', bus_model):
+                result['9M'] = qty_veh
+                return result
+            elif re.search(r'\b12M\b', bus_model):
                 result['12M'] = qty_veh
                 return result
     
@@ -191,41 +202,97 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
                 result[model] = quantity
         return result
     
-    # Method 3: Try to infer from other columns
-    # Check if any other column contains bus model information
+    # Method 3: Systematic search through all columns with priority order
+    # First collect all potential matches, then apply priority
+    detected_models = []
+    
     for col_name, value in row.items():
         if pd.notna(value):
             value_str = str(value).upper()
-            if '7M' in value_str or ' 7M ' in value_str:
+            
+            # Use word boundaries to avoid false matches
+            # Priority: Check for exact matches first
+            if re.search(r'\b7M\b', value_str):
+                detected_models.append('7M')
+            if re.search(r'\b9M\b', value_str):
+                detected_models.append('9M')
+            if re.search(r'\b12M\b', value_str):
+                detected_models.append('12M')
+    
+    # Remove duplicates while preserving order
+    detected_models = list(dict.fromkeys(detected_models))
+    
+    # If multiple models detected, apply priority logic
+    if detected_models:
+        # Priority 1: If only one model detected, use it
+        if len(detected_models) == 1:
+            result[detected_models[0]] = qty_veh
+            return result
+        
+        # Priority 2: If multiple models, check the most specific/relevant column
+        # Look in columns that are most likely to contain the correct model info
+        priority_columns = []
+        for col in row.index:
+            col_upper = str(col).upper()
+            if any(keyword in col_upper for keyword in ['MODEL', 'TYPE', 'BUS', 'VEHICLE']):
+                priority_columns.append(col)
+        
+        # Check priority columns first
+        for col in priority_columns:
+            if pd.notna(row[col]):
+                value_str = str(row[col]).upper()
+                if re.search(r'\b7M\b', value_str):
+                    result['7M'] = qty_veh
+                    return result
+                elif re.search(r'\b9M\b', value_str):
+                    result['9M'] = qty_veh
+                    return result
+                elif re.search(r'\b12M\b', value_str):
+                    result['12M'] = qty_veh
+                    return result
+        
+        # Priority 3: If still ambiguous, use the first detected model
+        result[detected_models[0]] = qty_veh
+        return result
+    
+    # Method 4: Last resort - check for numeric patterns without 'M'
+    for col_name, value in row.items():
+        if pd.notna(value):
+            value_str = str(value).strip()
+            
+            # Look for standalone numbers that might indicate bus length
+            if re.match(r'^\s*7\s*$', value_str):
                 result['7M'] = qty_veh
                 return result
-            elif '9M' in value_str or ' 9M ' in value_str:
+            elif re.match(r'^\s*9\s*$', value_str):
                 result['9M'] = qty_veh
                 return result
-            elif '12M' in value_str or ' 12M ' in value_str:
+            elif re.match(r'^\s*12\s*$', value_str):
                 result['12M'] = qty_veh
                 return result
     
-    # Method 4: Look for numeric patterns in part descriptions
-    part_desc = ""
-    for col in row.index:
-        if any(keyword in str(col).upper() for keyword in ['PART', 'DESC', 'NAME']):
-            if pd.notna(row[col]):
-                part_desc += str(row[col]).upper() + " "
-    
-    if part_desc:
-        if '7M' in part_desc or '7 M' in part_desc:
-            result['7M'] = qty_veh
-            return result
-        elif '9M' in part_desc or '9 M' in part_desc:
-            result['9M'] = qty_veh
-            return result
-        elif '12M' in part_desc or '12 M' in part_desc:
-            result['12M'] = qty_veh
-            return result
-    
     # Method 5: If no specific model is detected, leave all boxes empty
-    # This prevents defaulting to any particular model
+    return result
+
+# Debug version to help troubleshoot
+def debug_detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
+    """
+    Debug version that prints what it finds in each step
+    """
+    print(f"\n=== DEBUG: Bus Model Detection ===")
+    print(f"Quantity column: {qty_veh_col}")
+    print(f"Bus model column: {bus_model_col}")
+    
+    # Print all row data for debugging
+    print("\nAll row data:")
+    for col, val in row.items():
+        if pd.notna(val):
+            print(f"  {col}: {val}")
+    
+    result = detect_bus_model_and_qty(row, qty_veh_col, bus_model_col)
+    print(f"\nFinal result: {result}")
+    print("=== END DEBUG ===\n")
+    
     return result
 
 def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None, status_placeholder=None):
