@@ -1,4 +1,13 @@
 import streamlit as st
+
+# This must be the very first Streamlit command
+st.set_page_config(
+    page_title="Bin Label Generator",
+    page_icon="🏷️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import pandas as pd
 import os
 from reportlab.lib.pagesizes import landscape
@@ -12,7 +21,6 @@ from io import BytesIO
 import subprocess
 import sys
 import tempfile
-import base64
 import re
 
 # Define sticker dimensions
@@ -24,93 +32,69 @@ STICKER_PAGESIZE = (STICKER_WIDTH, STICKER_HEIGHT)
 CONTENT_BOX_WIDTH = 10 * cm  # Same width as page
 CONTENT_BOX_HEIGHT = 7.2 * cm  # Half the page height
 
-# Check for PIL and install if needed
+# Function to install packages if needed
+def install_if_needed(package_name, import_name=None):
+    """Install package if not available"""
+    if import_name is None:
+        import_name = package_name
+    
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        try:
+            st.warning(f"Installing {package_name}...")
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', package_name])
+            return True
+        except Exception as e:
+            st.error(f"Failed to install {package_name}: {e}")
+            return False
+
+# Check and install required packages
+def check_dependencies():
+    """Check and install required packages"""
+    packages = [
+        ('pillow', 'PIL'),
+        ('qrcode', 'qrcode'),
+        ('reportlab', 'reportlab'),
+        ('openpyxl', 'openpyxl')
+    ]
+    
+    all_installed = True
+    for package, import_name in packages:
+        if not install_if_needed(package, import_name):
+            all_installed = False
+    
+    return all_installed
+
+# Import PIL and qrcode after ensuring they're installed
+PIL_AVAILABLE = False
+QR_AVAILABLE = False
+
 try:
     from PIL import Image as PILImage
     PIL_AVAILABLE = True
 except ImportError:
-    PIL_AVAILABLE = False
-    st.error("PIL not available. Please install: pip install pillow")
-    st.stop()
+    pass
 
-# Check for QR code library and install if needed
 try:
     import qrcode
     QR_AVAILABLE = True
 except ImportError:
-    QR_AVAILABLE = False
-    st.error("qrcode not available. Please install: pip install qrcode")
-    st.stop()
+    pass
 
 # Define paragraph styles
 bold_style = ParagraphStyle(name='Bold', fontName='Helvetica-Bold', fontSize=16, alignment=TA_CENTER, leading=14)
 desc_style = ParagraphStyle(name='Description', fontName='Helvetica', fontSize=11, alignment=TA_CENTER, leading=12)
 qty_style = ParagraphStyle(name='Quantity', fontName='Helvetica', fontSize=11, alignment=TA_CENTER, leading=12)
 
-def get_dynamic_description_style(description_text):
-    """
-    Create a dynamic description style based on text length
-    Adjusts font size and leading for longer descriptions to fit within the box
-    """
-    text_length = len(description_text)
-    
-    if text_length <= 50:
-        # Short description - use standard size
-        return ParagraphStyle(
-            name='Description', 
-            fontName='Helvetica', 
-            fontSize=11, 
-            alignment=TA_CENTER, 
-            leading=12
-        )
-    elif text_length <= 80:
-        # Medium description - slightly smaller
-        return ParagraphStyle(
-            name='DescriptionMedium', 
-            fontName='Helvetica', 
-            fontSize=10, 
-            alignment=TA_CENTER, 
-            leading=10
-        )
-    elif text_length <= 120:
-        # Long description - smaller font
-        return ParagraphStyle(
-            name='DescriptionLong', 
-            fontName='Helvetica', 
-            fontSize=9, 
-            alignment=TA_CENTER, 
-            leading=9
-        )
-    else:
-        # Very long description - smallest font
-        return ParagraphStyle(
-            name='DescriptionVeryLong', 
-            fontName='Helvetica', 
-            fontSize=8, 
-            alignment=TA_CENTER, 
-            leading=8
-        )
-
-def truncate_description_smartly(description, max_length=150):
-    """
-    Smart truncation that tries to break at word boundaries
-    """
-    if len(description) <= max_length:
-        return description
-    
-    # Try to truncate at last complete word within limit
-    truncated = description[:max_length]
-    last_space = truncated.rfind(' ')
-    
-    if last_space > max_length * 0.8:  # If last space is reasonably close to limit
-        return truncated[:last_space] + "..."
-    else:
-        return truncated + "..."
-
 def generate_qr_code(data_string):
     """
     Generate a QR code from the given data string
     """
+    if not QR_AVAILABLE:
+        return None
+        
     try:
         # Create QR code instance
         qr = qrcode.QRCode(
@@ -136,6 +120,8 @@ def generate_qr_code(data_string):
         return Image(img_buffer, width=2.5*cm, height=2.5*cm)
     except Exception as e:
         st.error(f"Error generating QR code: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def parse_location_string(location_str):
@@ -150,6 +136,7 @@ def parse_location_string(location_str):
     location_str = location_str.strip()
 
     # Try to parse location components
+    import re
     pattern = r'([^_\s]+)'
     matches = re.findall(pattern, location_str)
 
@@ -159,65 +146,86 @@ def parse_location_string(location_str):
 
     return location_parts
 
-def detect_bus_model_columns(df_columns):
+def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
     """
-    Improved bus model column detection with better pattern matching
-    Returns a dictionary mapping column names to bus models
-    """
-    bus_model_columns = {}
-    
-    for col in df_columns:
-        col_str = str(col).strip()
-        col_upper = col_str.upper()
-        
-        # More precise pattern matching to avoid false positives
-        # Check for 7M patterns
-        if re.search(r'\b7\s*M\b', col_upper) or re.search(r'\bSEVEN\s*M\b', col_upper):
-            bus_model_columns[col] = '7M'
-        # Check for 9M patterns  
-        elif re.search(r'\b9\s*M\b', col_upper) or re.search(r'\bNINE\s*M\b', col_upper):
-            bus_model_columns[col] = '9M'
-        # Check for 12M patterns
-        elif re.search(r'\b12\s*M\b', col_upper) or re.search(r'\bTWELVE\s*M\b', col_upper):
-            bus_model_columns[col] = '12M'
-        # Handle QTY/VEH columns with specific bus model indicators
-        elif 'QTY' in col_upper and 'VEH' in col_upper:
-            # Check which bus model this QTY/VEH column refers to
-            if re.search(r'\b7\b', col_upper) and not re.search(r'\b12\b', col_upper):
-                bus_model_columns[col] = '7M'
-            elif re.search(r'\b9\b', col_upper):
-                bus_model_columns[col] = '9M'
-            elif re.search(r'\b12\b', col_upper):
-                bus_model_columns[col] = '12M'
-    
-    return bus_model_columns
-
-def extract_bus_model_quantities(row, bus_model_columns):
-    """
-    Extract quantities for 7M, 9M, and 12M based on bus model columns
+    Detect bus model and return quantity for the appropriate model
     Returns a dictionary with keys '7M', '9M', '12M' and their respective quantities
     """
-    quantities = {'7M': '', '9M': '', '12M': ''}
+    # Initialize result dictionary
+    result = {'7M': '', '9M': '', '12M': ''}
     
-    # Debug: Print column mapping for troubleshooting
-    if hasattr(st, 'session_state') and 'debug_mode' in st.session_state and st.session_state.debug_mode:
-        st.write(f"Bus model columns detected: {bus_model_columns}")
+    # Get quantity value
+    qty_veh = ""
+    if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
+        qty_veh = str(row[qty_veh_col])
     
-    for col_name, bus_model in bus_model_columns.items():
-        if col_name in row and pd.notna(row[col_name]):
-            qty_value = str(row[col_name]).strip()
-            # Only add non-zero, non-empty values
-            if qty_value and qty_value not in ['0', '0.0', 'nan', 'NaN', '']:
-                quantities[bus_model] = qty_value
+    if not qty_veh:
+        return result
     
-    return quantities
+    # Method 1: Check if there's a dedicated bus model column
+    bus_model = ""
+    if bus_model_col and bus_model_col in row and pd.notna(row[bus_model_col]):
+        bus_model = str(row[bus_model_col]).upper()
+    
+    # Method 2: Check if bus model is embedded in the qty_veh value itself
+    # Look for patterns like "7M:5", "9M-3", "12M 2", etc.
+    qty_pattern = r'(\d+M)[:\-\s]*(\d+)'
+    matches = re.findall(qty_pattern, qty_veh.upper())
+    
+    if matches:
+        # If we found model-quantity pairs in the qty_veh field
+        for model, quantity in matches:
+            if model in result:
+                result[model] = quantity
+    elif bus_model:
+        # If we have a separate bus model column, use that
+        if '7M' in bus_model or '7' in bus_model:
+            result['7M'] = qty_veh
+        elif '9M' in bus_model or '9' in bus_model:
+            result['9M'] = qty_veh
+        elif '12M' in bus_model or '12' in bus_model:
+            result['12M'] = qty_veh
+    else:
+        # Method 3: Try to infer from other columns or default behavior
+        # Check if any other column contains bus model information
+        for col_name, value in row.items():
+            if pd.notna(value):
+                value_str = str(value).upper()
+                if '7M' in value_str:
+                    result['7M'] = qty_veh
+                    break
+                elif '9M' in value_str:
+                    result['9M'] = qty_veh
+                    break
+                elif '12M' in value_str:
+                    result['12M'] = qty_veh
+                    break
+        
+        # If no model detected, check for numeric patterns that might indicate model
+        if not any(result.values()):
+            # Look for common patterns in part numbers or descriptions that might indicate bus model
+            part_desc = ""
+            for col in row.index:
+                if any(keyword in str(col).upper() for keyword in ['PART', 'DESC', 'NAME']):
+                    if pd.notna(row[col]):
+                        part_desc += str(row[col]).upper() + " "
+            
+            if '7M' in part_desc or '7 M' in part_desc:
+                result['7M'] = qty_veh
+            elif '9M' in part_desc or '9 M' in part_desc:
+                result['9M'] = qty_veh
+            elif '12M' in part_desc or '12 M' in part_desc:
+                result['12M'] = qty_veh
+            else:
+                # Default: if no model detected, assume it's for the most common model (9M)
+                result['9M'] = qty_veh
+    
+    return result
 
-def generate_sticker_labels(df, progress_bar=None, status_container=None):
-    """Generate sticker labels with QR code from DataFrame"""
-    
-    # Create temporary file for PDF
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-        output_pdf_path = tmp_file.name
+def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None, status_placeholder=None):
+    """Generate sticker labels with QR code from Excel data"""
+    if status_placeholder:
+        status_placeholder.info(f"Processing file: {excel_file_path}")
 
     # Create a function to draw the border box around content
     def draw_border(canvas, doc):
@@ -226,8 +234,8 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         # Position it at the top of the page with minimal margin
         x_offset = (STICKER_WIDTH - CONTENT_BOX_WIDTH) / 2
         y_offset = STICKER_HEIGHT - CONTENT_BOX_HEIGHT - 0.2*cm  # Position at top with minimal margin
-        canvas.setStrokeColor(colors.Color(0, 0, 0, alpha=0.95))  # Slightly darker black (95% opacity)
-        canvas.setLineWidth(1.8)  # Slightly thicker border
+        canvas.setStrokeColor(colors.black)
+        canvas.setLineWidth(1.6)  # Increased line width by ~7% (from 1.5 to 1.6)
         canvas.rect(
             x_offset + doc.leftMargin,
             y_offset,
@@ -236,53 +244,69 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
         canvas.restoreState()
 
+    # Load the Excel data
+    try:
+        if excel_file_path.lower().endswith('.csv'):
+            df = pd.read_csv(excel_file_path)
+        else:
+            try:
+                df = pd.read_excel(excel_file_path)
+            except Exception as e:
+                try:
+                    df = pd.read_excel(excel_file_path, engine='openpyxl')
+                except Exception as e2:
+                    df = pd.read_csv(excel_file_path, encoding='latin1')
+
+        if status_placeholder:
+            status_placeholder.success(f"Successfully read file with {len(df)} rows")
+            st.info(f"Columns found: {df.columns.tolist()}")
+    except Exception as e:
+        error_msg = f"Error reading file: {e}"
+        if status_placeholder:
+            status_placeholder.error(error_msg)
+        return None
+
     # Identify columns (case-insensitive)
-    original_columns = df.columns.tolist()
     df.columns = [col.upper() if isinstance(col, str) else col for col in df.columns]
     cols = df.columns.tolist()
 
     # Find relevant columns
-    part_no_col = next((col for col in cols if 'PART' in str(col) and ('NO' in str(col) or 'NUM' in str(col) or '#' in str(col))),
+    part_no_col = next((col for col in cols if 'PART' in col and ('NO' in col or 'NUM' in col or '#' in col)),
                    next((col for col in cols if col in ['PARTNO', 'PART']), cols[0]))
 
-    desc_col = next((col for col in cols if 'DESC' in str(col)),
-                   next((col for col in cols if 'NAME' in str(col)), cols[1] if len(cols) > 1 else part_no_col))
+    desc_col = next((col for col in cols if 'DESC' in col),
+                   next((col for col in cols if 'NAME' in col), cols[1] if len(cols) > 1 else part_no_col))
 
     # Look specifically for "QTY/BIN" column first, then fall back to general QTY column
-    qty_bin_col = next((col for col in cols if 'QTY/BIN' in str(col) or 'QTY_BIN' in str(col) or 'QTYBIN' in str(col)), 
-                  next((col for col in cols if 'QTY' in str(col) and 'BIN' in str(col)), None))
+    qty_bin_col = next((col for col in cols if 'QTY/BIN' in col or 'QTY_BIN' in col or 'QTYBIN' in col), 
+                  next((col for col in cols if 'QTY' in col and 'BIN' in col), None))
     
     # If no specific QTY/BIN column is found, fall back to general QTY column
     if not qty_bin_col:
-        qty_bin_col = next((col for col in cols if 'QTY' in str(col) and 'VEH' not in str(col)),
-                      next((col for col in cols if 'QUANTITY' in str(col)), None))
+        qty_bin_col = next((col for col in cols if 'QTY' in col and 'VEH' not in col and 'BUS' not in col),
+                      next((col for col in cols if 'QUANTITY' in col), None))
   
-    loc_col = next((col for col in cols if 'LOC' in str(col) or 'POS' in str(col) or 'LOCATION' in str(col)),
+    loc_col = next((col for col in cols if 'LOC' in col or 'POS' in col or 'LOCATION' in col),
                    cols[2] if len(cols) > 2 else desc_col)
 
-    # Detect bus model columns using original column names to preserve case sensitivity
-    bus_model_columns = detect_bus_model_columns(original_columns)
-    
-    # Convert bus model column keys to uppercase for consistency
-    bus_model_columns_upper = {}
-    for orig_col, bus_model in bus_model_columns.items():
-        upper_col = orig_col.upper() if isinstance(orig_col, str) else orig_col
-        bus_model_columns_upper[upper_col] = bus_model
+    # Improved detection of QTY/VEH column
+    qty_veh_col = next((col for col in cols if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH', 'QTYPERCAR', 'QTYCAR', 'QTY/CAR'])), None)
+
+    # Look for bus model column
+    bus_model_col = next((col for col in cols if any(term in col for term in ['BUS', 'MODEL', 'VEHICLE', 'TYPE'])), None)
 
     # Look for store location column
-    store_loc_col = next((col for col in cols if 'STORE' in str(col) and 'LOC' in str(col)),
-                      next((col for col in cols if 'STORELOCATION' in str(col)), None))
+    store_loc_col = next((col for col in cols if 'STORE' in col and 'LOC' in col),
+                      next((col for col in cols if 'STORELOCATION' in col), None))
 
-    if status_container:
-        status_container.write(f"**Column Mapping:**")
-        status_container.write(f"- Part No: {part_no_col}")
-        status_container.write(f"- Description: {desc_col}")
-        status_container.write(f"- Location: {loc_col}")
-        status_container.write(f"- Qty/Bin: {qty_bin_col}")
-        if bus_model_columns_upper:
-            status_container.write(f"- Bus Model Columns: {bus_model_columns_upper}")
+    if status_placeholder:
+        st.info(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Location: {loc_col}, Qty/Bin: {qty_bin_col}")
+        if qty_veh_col:
+            st.info(f"Qty/Veh Column: {qty_veh_col}")
+        if bus_model_col:
+            st.info(f"Bus Model Column: {bus_model_col}")
         if store_loc_col:
-            status_container.write(f"- Store Location: {store_loc_col}")
+            st.info(f"Store Location Column: {store_loc_col}")
 
     # Create document with minimal margins
     doc = SimpleDocTemplate(output_pdf_path, pagesize=STICKER_PAGESIZE,
@@ -298,7 +322,10 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
     for index, row in df.iterrows():
         # Update progress
         if progress_bar:
-            progress_bar.progress((index + 1) / total_rows)
+            progress_value = int((index+1)/total_rows*100)
+            progress_bar.progress(progress_value)
+        if status_placeholder:
+            status_placeholder.info(f"Creating sticker {index+1} of {total_rows} ({int((index+1)/total_rows*100)}%)")
         
         elements = []
 
@@ -306,17 +333,13 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         part_no = str(row[part_no_col])
         desc = str(row[desc_col])
         
-        # Smart truncation and dynamic styling for description
-        processed_desc = truncate_description_smartly(desc, 150)
-        dynamic_desc_style = get_dynamic_description_style(processed_desc)
-        
         # Extract QTY/BIN properly
         qty_bin = ""
         if qty_bin_col and qty_bin_col in row and pd.notna(row[qty_bin_col]):
             qty_bin = str(row[qty_bin_col])
             
-        # Extract bus model quantities
-        bus_quantities = extract_bus_model_quantities(row, bus_model_columns_upper)
+        # Detect bus model and get quantities for each model
+        bus_model_quantities = detect_bus_model_and_qty(row, qty_veh_col, bus_model_col)
         
         location_str = str(row[loc_col]) if loc_col and loc_col in row else ""
         store_location = str(row[store_loc_col]) if store_loc_col and store_loc_col in row else ""
@@ -325,7 +348,9 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         # Generate QR code with part information
         qr_data = f"Part No: {part_no}\nDescription: {desc}\nLocation: {location_str}\n"
         qr_data += f"Store Location: {store_location}\n"
-        qr_data += f"7M Qty: {bus_quantities['7M']}\n9M Qty: {bus_quantities['9M']}\n12M Qty: {bus_quantities['12M']}\n"
+        for model, qty in bus_model_quantities.items():
+            if qty:
+                qr_data += f"{model}: {qty}\n"
         qr_data += f"QTY/BIN: {qty_bin}"
         
         qr_image = generate_qr_code(qr_data)
@@ -336,20 +361,20 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         qty_row_height = 0.5*cm
         location_row_height = 0.5*cm
 
-        # Main table data with dynamic description styling
+        # Main table data
         main_table_data = [
             ["Part No", Paragraph(f"{part_no}", bold_style)],
-            ["Description", Paragraph(processed_desc, dynamic_desc_style)],
+            ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, desc_style)],
             ["Qty/Bin", Paragraph(str(qty_bin), qty_style)]
         ]
 
-        # Create main table
+        # Create main table with slightly bolder lines
         main_table = Table(main_table_data,
                          colWidths=[content_width/3, content_width*2/3],
                          rowHeights=[header_row_height, desc_row_height, qty_row_height])
 
         main_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
@@ -358,8 +383,8 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
 
         elements.append(main_table)
 
-        # Store Location section
-        store_loc_label = Paragraph("Store Location", ParagraphStyle(
+        # Store Location section with bold label
+        store_loc_label = Paragraph("<b>Store Location</b>", ParagraphStyle(
             name='StoreLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
         ))
 
@@ -383,10 +408,9 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
 
         store_loc_inner_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make store location values bold
             ('FONTSIZE', (0, 0), (-1, -1), 9),
         ]))
 
@@ -397,17 +421,19 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
 
         store_loc_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
 
         elements.append(store_loc_table)
 
-        # Line Location section
-        line_loc_label = Paragraph("Line Location", ParagraphStyle(
+        # Line Location section with bold label
+        line_loc_label = Paragraph("<b>Line Location</b>", ParagraphStyle(
             name='LineLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
         ))
+        
+        # The inner table width is already calculated above
         
         # Create the inner table
         line_loc_inner_table = Table(
@@ -417,10 +443,9 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
         
         line_loc_inner_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make line location values bold
             ('FONTSIZE', (0, 0), (-1, -1), 9)
         ]))
         
@@ -432,7 +457,7 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
 
         line_loc_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
@@ -442,24 +467,14 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         # Add smaller spacer between line location and bottom section
         elements.append(Spacer(1, 0.3*cm))
 
-        # Bottom section - Bus model quantities with appropriate placement
+        # Bottom section - Bus model boxes with smart quantity placement
         mtm_box_width = 1.2*cm
         mtm_row_height = 1.5*cm
 
-        # Create position matrix with bus model quantities in appropriate boxes
+        # Use the detected bus model quantities
         position_matrix_data = [
             ["7M", "9M", "12M"],
-            [
-                Paragraph(f"<b>{bus_quantities['7M']}</b>", ParagraphStyle(
-                    name='Bold7M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
-                )) if bus_quantities['7M'] else "",
-                Paragraph(f"<b>{bus_quantities['9M']}</b>", ParagraphStyle(
-                    name='Bold9M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
-                )) if bus_quantities['9M'] else "",
-                Paragraph(f"<b>{bus_quantities['12M']}</b>", ParagraphStyle(
-                    name='Bold12M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
-                )) if bus_quantities['12M'] else ""
-            ]
+            [bus_model_quantities['7M'], bus_model_quantities['9M'], bus_model_quantities['12M']]
         ]
 
         mtm_table = Table(
@@ -469,7 +484,7 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
         )
 
         mtm_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 1.05, colors.black),  # Increased line width by 5%
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -529,187 +544,268 @@ def generate_sticker_labels(df, progress_bar=None, status_container=None):
     try:
         # Pass the draw_border function to build to add border box
         doc.build(all_elements, onFirstPage=draw_border, onLaterPages=draw_border)
+        if status_placeholder:
+            status_placeholder.success(f"PDF generated successfully: {output_pdf_path}")
         return output_pdf_path
     except Exception as e:
-        st.error(f"Error building PDF: {e}")
+        error_msg = f"Error building PDF: {e}"
+        if status_placeholder:
+            status_placeholder.error(error_msg)
+            import traceback
+            traceback.print_exc()
         return None
 
-def get_download_link(file_path, filename):
-    """Generate a download link for the PDF file"""
-    with open(file_path, "rb") as f:
-        bytes_data = f.read()
-    b64 = base64.b64encode(bytes_data).decode()
-    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}">Download PDF</a>'
-    return href
-
 def main():
-    st.set_page_config(
-        page_title="Bin Label Generator", 
-        page_icon="🏷️", 
-        layout="wide"
-    )
+    # Check dependencies first
+    if not check_dependencies():
+        st.error("Failed to install required dependencies. Please check your environment.")
+        return
+    
+    # Re-import after ensuring packages are available
+    global PIL_AVAILABLE, QR_AVAILABLE
+    try:
+        from PIL import Image as PILImage
+        PIL_AVAILABLE = True
+    except ImportError:
+        PIL_AVAILABLE = False
+        
+    try:
+        import qrcode
+        QR_AVAILABLE = True
+    except ImportError:
+        QR_AVAILABLE = False
     
     st.title("🏷️ Bin Label Generator")
-    st.markdown("Generate professional bin labels with QR codes from your Excel/CSV data")
     
-    # Add debug mode toggle
-    debug_mode = st.sidebar.checkbox("Debug Mode", help="Enable to see bus model column detection details")
-    if debug_mode:
-        st.session_state.debug_mode = True
-    
-    # Sidebar for information
-    with st.sidebar:
-        st.header("📋 Instructions")
-        st.markdown("""
-        1. Upload your Excel or CSV file
-        2. Preview the data to ensure correct formatting
-        3. Click 'Generate Labels' to create PDF
-        4. Download the generated PDF file
-        
-        **Required Columns:**
-        - Part Number (PART NO, PARTNO, etc.)
-        - Description (DESC, NAME, etc.)
-        - Location (LOC, LOCATION, etc.)
-        - Quantity/Bin (QTY/BIN, QTY, etc.)
-        
-        **Bus Model Columns:**
-        - Columns containing "7M", "9M", or "12M"
-        - QTY/VEH columns with bus model indicators
-        - Will be automatically detected and mapped
-        """)
-        
-        st.header("✨ Features")
-        st.markdown("""
-        - **Improved Bus Model Detection**
-        - **Automatic QR Code Generation**
-        - **Smart Description Sizing**
-        - **Professional Layout**
-        - **Border Box Design**
-        - **Multiple File Formats**
-        """)
-    
-    # Main content area
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header("📁 File Upload")
-        uploaded_file = st.file_uploader(
-            "Choose your Excel or CSV file",
-            type=['xlsx', 'xls', 'csv'],
-            help="Upload the file containing your bin label data"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                # Read the file
-                if uploaded_file.name.lower().endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_excel(uploaded_file)
-                
-                st.success(f"✅ File loaded successfully! Found {len(df)} rows and {len(df.columns)} columns.")
-                
-                # Display file information
-                st.subheader("📊 Data Preview")
-                st.write(f"**Columns found:** {', '.join(df.columns.tolist())}")
-                
-                # Show bus model column detection if debug mode is on
-                if debug_mode:
-                    bus_model_cols = detect_bus_model_columns(df.columns.tolist())
-                    if bus_model_cols:
-                        st.write("**🚌 Bus Model Columns Detected:**")
-                        for col, model in bus_model_cols.items():
-                            st.write(f"- {col} → {model}")
-                    else:
-                        st.write("**🚌 No Bus Model Columns Detected**")
-                
-                # Show first few rows
-                st.dataframe(df.head(10), use_container_width=True)
-                
-                if len(df) > 10:
-                    st.info(f"Showing first 10 rows. Total rows: {len(df)}")
-                
-                # Generate labels button
-                st.subheader("🚀 Generate Labels")
-                
-                if st.button("Generate Bin Labels", type="primary", use_container_width=True):
-                    with st.spinner("Generating labels with QR codes..."):
-                        # Create progress bar and status container
-                        progress_bar = st.progress(0)
-                        status_container = st.empty()
-                        
-                        # Generate the PDF
-                        pdf_file = generate_sticker_labels(df, progress_bar, status_container)
-                        
-                        if pdf_file:
-                            st.success("✅ Labels generated successfully!")
-                            
-                            # Read the PDF file for download
-                            with open(pdf_file, "rb") as f:
-                                pdf_bytes = f.read()
-                            
-                            # Create download button
-                            st.download_button(
-                                label="📥 Download PDF Labels",
-                                data=pdf_bytes,
-                                file_name=f"{uploaded_file.name.split('.')[0]}_labels.pdf",
-                                mime="application/pdf",
-                                type="primary",
-                                use_container_width=True
-                            )
-                            
-                            # Clean up temporary file
-                            try:
-                                os.unlink(pdf_file)
-                            except:
-                                pass
-                        else:
-                            st.error("❌ Failed to generate PDF. Please check your data and try again.")
-            
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)}")
-                st.info("Please ensure your file is a valid Excel (.xlsx, .xls) or CSV (.csv) file.")
-    
-    with col2:
-        st.header("📋 Sample Data Format")
-        st.markdown("""
-        **Example CSV structure:**
-        ```
-        Part No,Description,Location,QTY/BIN,7M QTY,9M QTY,12M QTY,Store Location
-        P001,Engine Filter,A1_B2_C3,5,2,1,2,ST01_R1_S2
-        P002,Brake Pad Set,B1_C2_D3,3,1,1,1,ST02_R2_S1
-        ```
-        
-        The system will automatically:
-        - Detect part number columns
-        - Find description fields  
-        - Identify location information
-        - Map bus model quantities (7M, 9M, 12M)
-        - Generate QR codes with all part info
-        """)
-        
-        st.header("🎯 Label Layout")
-        st.markdown("""
-        Each label contains:
-        - **Part Number** (bold header)
-        - **Description** (auto-sized text)
-        - **Quantity/Bin** information
-        - **Store Location** (7 column grid)
-        - **Line Location** (7 column grid)
-        - **Bus Model Quantities** (7M, 9M, 12M boxes)
-        - **QR Code** with all part information
-        """)
-
-    # Footer
-    st.markdown("---")
+    # Add credit line below title
     st.markdown(
         """
-        <div style='text-align: center; color: #666; padding: 20px;'>
-            <p>🏷️ Professional Bin Label Generator | Built with Streamlit & ReportLab</p>
+        <div style='text-align: center; color: #666; font-size: 14px; margin-top: -10px; margin-bottom: 20px;'>
+            <em>Designed and Developed by Agilomatrix</em>
         </div>
         """, 
         unsafe_allow_html=True
     )
+    
+    st.markdown("Generate professional sticker labels with QR codes from your Excel/CSV data")
+    
+    # Sidebar for file upload
+    with st.sidebar:
+        st.header("📁 Input Files")
+        
+        uploaded_file = st.file_uploader(
+            "Upload Excel/CSV File",
+            type=['xlsx', 'xls', 'csv'],
+            help="Select your Excel or CSV file containing the data for label generation"
+        )
+        
+        if uploaded_file is not None:
+            st.success(f"✅ File uploaded: {uploaded_file.name}")
+            
+            # Show file info
+            st.info(f"📊 File size: {uploaded_file.size} bytes")
+            
+    # Main content area
+    if uploaded_file is not None:
+        # Create two columns
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.header("📋 File Preview")
+            
+            # Save uploaded file to temporary location
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                temp_file_path = tmp_file.name
+            
+            try:
+                # Read and display preview
+                if uploaded_file.name.lower().endswith('.csv'):
+                    df_preview = pd.read_csv(temp_file_path)
+                else:
+                    df_preview = pd.read_excel(temp_file_path)
+                
+                st.dataframe(df_preview.head(10), use_container_width=True)
+                st.info(f"📈 Total rows: {len(df_preview)} | Columns: {len(df_preview.columns)}")
+                
+                # Show column information
+                with st.expander("📊 Column Information"):
+                    st.write("**Available Columns:**")
+                    for i, col in enumerate(df_preview.columns):
+                        st.write(f"{i+1}. {col}")
+                
+            except Exception as e:
+                st.error(f"❌ Error reading file: {e}")
+                st.stop()
+        
+        with col2:
+            st.header("⚙️ Generation Settings")
+            
+            # Generate button
+            if st.button("🚀 Generate Sticker Labels", type="primary", use_container_width=True):
+                # Create placeholders for status updates
+                status_placeholder = st.empty()
+                progress_placeholder = st.empty()
+                
+                with st.spinner("Generating PDF with QR codes..."):
+                    # Create temporary output file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_output:
+                        output_path = tmp_output.name
+                    
+                    # Create progress bar
+                    progress_bar = progress_placeholder.progress(0)
+                    
+                    # Generate the PDF
+                    result = generate_sticker_labels(
+                        temp_file_path, 
+                        output_path, 
+                        progress_bar=progress_bar,
+                        status_placeholder=status_placeholder
+                    )
+                    
+                    if result:
+                        # Success - offer download
+                        status_placeholder.success("✅ PDF generation completed successfully!")
+                        progress_bar.progress(100)
+                        
+                        # Read the generated PDF
+                        with open(output_path, "rb") as pdf_file:
+                            pdf_bytes = pdf_file.read()
+                        
+                        # Provide download button
+                        st.download_button(
+                            label="📥 Download PDF",
+                            data=pdf_bytes,
+                            file_name=f"{uploaded_file.name.split('.')[0]}_stickers.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                        
+                        # Show success message
+                        st.success("🎉 Your sticker labels are ready for download!")
+                        
+                        # Clean up temporary files
+                        try:
+                            os.unlink(output_path)
+                        except:
+                            pass
+                    else:
+                        status_placeholder.error("❌ PDF generation failed. Please check your file and try again.")
+                
+                # Clean up temporary input file
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+            
+            # Additional information
+            st..markdown("---")
+            st.subheader("ℹ️ Requirements")
+            
+            st.markdown("""
+            **Expected Excel/CSV Format:**
+            - **Part No/Number**: Part identification
+            - **Description**: Part description
+            - **Location**: Storage location
+            - **Qty/Bin**: Quantity per bin
+            - **Qty/Veh**: Quantity per vehicle (optional)
+            - **Bus Model**: Bus model type (optional)
+            - **Store Location**: Store location (optional)
+            """)
+            
+            st.markdown("---")
+            st.subheader("📝 Features")
+            
+            st.markdown("""
+            ✅ **QR Code Generation**: Each label includes a QR code with part information  
+            ✅ **Bus Model Detection**: Automatically detects 7M, 9M, and 12M bus models  
+            ✅ **Location Parsing**: Handles complex location strings  
+            ✅ **Professional Layout**: Clean, printable sticker format  
+            ✅ **Multiple File Formats**: Supports Excel (.xlsx, .xls) and CSV files  
+            """)
+            
+            if not QR_AVAILABLE:
+                st.warning("⚠️ QR code generation not available. Labels will be generated without QR codes.")
+            
+            if not PIL_AVAILABLE:
+                st.warning("⚠️ Image processing not fully available. Some features may be limited.")
+    
+    else:
+        # Welcome screen when no file is uploaded
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            st.markdown("""
+            <div style='text-align: center; padding: 2rem;'>
+                <h3>🚀 Get Started</h3>
+                <p>Upload your Excel or CSV file using the sidebar to begin generating professional sticker labels with QR codes.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Instructions
+        st.markdown("---")
+        st.header("📖 Instructions")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **Step 1: Prepare Your Data**
+            - Ensure your Excel/CSV file contains the required columns
+            - Part numbers, descriptions, and locations are essential
+            - Optional: Include quantity and bus model information
+            """)
+            
+            st.markdown("""
+            **Step 2: Upload File**
+            - Use the file uploader in the sidebar
+            - Supported formats: .xlsx, .xls, .csv
+            - Preview your data before generation
+            """)
+        
+        with col2:
+            st.markdown("""
+            **Step 3: Generate Labels**
+            - Click the "Generate Sticker Labels" button
+            - Monitor the progress during generation
+            - Download your PDF when complete
+            """)
+            
+            st.markdown("""
+            **Step 4: Print & Use**
+            - Print on compatible sticker paper
+            - Each label includes a QR code for easy scanning
+            - Professional format ready for industrial use
+            """)
+        
+        # Sample data format
+        st.markdown("---")
+        st.header("📊 Sample Data Format")
+        
+        sample_data = {
+            'PART NO': ['ABC123', 'DEF456', 'GHI789'],
+            'DESCRIPTION': ['Brake Pad Assembly', 'Air Filter Element', 'Oil Seal Ring'],
+            'LOCATION': ['A1_B2_C3_D4_E5_F6_G7', 'B2_C3_D4_E5_F6_G7_H8', 'C3_D4_E5_F6_G7_H8_I9'],
+            'QTY/BIN': [5, 10, 2],
+            'QTY/VEH': ['9M:2', '7M:1', '12M:3'],
+            'STORE LOCATION': ['MAIN_WAREHOUSE_A1', 'SPARE_PARTS_B2', 'ASSEMBLY_LINE_C3']
+        }
+        
+        sample_df = pd.DataFrame(sample_data)
+        st.dataframe(sample_df, use_container_width=True)
+        
+        st.info("💡 **Tip**: Your column names don't need to match exactly. The application will automatically detect similar column names.")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 1rem;'>
+    <p>© 2024 Agilomatrix - Bin Label Generator v2.0</p>
+    <p><em>Professional sticker label generation with QR code integration</em></p>
+</div>
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
