@@ -157,15 +157,27 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
     # Get quantity value
     qty_veh = ""
     if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
-        qty_veh = str(row[qty_veh_col])
+        qty_veh = str(row[qty_veh_col]).strip()
     
     if not qty_veh:
         return result
     
-    # Method 1: Check if there's a dedicated bus model column
+    # Method 1: Check if there's a dedicated bus model column first
     bus_model = ""
     if bus_model_col and bus_model_col in row and pd.notna(row[bus_model_col]):
-        bus_model = str(row[bus_model_col]).upper()
+        bus_model = str(row[bus_model_col]).strip().upper()
+        
+        # If we have a dedicated bus model column, use it to determine which MTM box to fill
+        if bus_model:
+            if '7M' in bus_model or bus_model == '7':
+                result['7M'] = qty_veh
+                return result
+            elif '9M' in bus_model or bus_model == '9':
+                result['9M'] = qty_veh
+                return result
+            elif '12M' in bus_model or bus_model == '12':
+                result['12M'] = qty_veh
+                return result
     
     # Method 2: Check if bus model is embedded in the qty_veh value itself
     # Look for patterns like "7M:5", "9M-3", "12M 2", etc.
@@ -177,49 +189,43 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
         for model, quantity in matches:
             if model in result:
                 result[model] = quantity
-    elif bus_model:
-        # If we have a separate bus model column, use that
-        if '7M' in bus_model or '7' in bus_model:
-            result['7M'] = qty_veh
-        elif '9M' in bus_model or '9' in bus_model:
-            result['9M'] = qty_veh
-        elif '12M' in bus_model or '12' in bus_model:
-            result['12M'] = qty_veh
-    else:
-        # Method 3: Try to infer from other columns or default behavior
-        # Check if any other column contains bus model information
-        for col_name, value in row.items():
-            if pd.notna(value):
-                value_str = str(value).upper()
-                if '7M' in value_str:
-                    result['7M'] = qty_veh
-                    break
-                elif '9M' in value_str:
-                    result['9M'] = qty_veh
-                    break
-                elif '12M' in value_str:
-                    result['12M'] = qty_veh
-                    break
-        
-        # If no model detected, check for numeric patterns that might indicate model
-        if not any(result.values()):
-            # Look for common patterns in part numbers or descriptions that might indicate bus model
-            part_desc = ""
-            for col in row.index:
-                if any(keyword in str(col).upper() for keyword in ['PART', 'DESC', 'NAME']):
-                    if pd.notna(row[col]):
-                        part_desc += str(row[col]).upper() + " "
-            
-            if '7M' in part_desc or '7 M' in part_desc:
-                result['7M'] = qty_veh
-            elif '9M' in part_desc or '9 M' in part_desc:
-                result['9M'] = qty_veh
-            elif '12M' in part_desc or '12 M' in part_desc:
-                result['12M'] = qty_veh
-            else:
-                # Default: if no model detected, assume it's for the most common model (9M)
-                result['9M'] = qty_veh
+        return result
     
+    # Method 3: Try to infer from other columns
+    # Check if any other column contains bus model information
+    for col_name, value in row.items():
+        if pd.notna(value):
+            value_str = str(value).upper()
+            if '7M' in value_str or ' 7M ' in value_str:
+                result['7M'] = qty_veh
+                return result
+            elif '9M' in value_str or ' 9M ' in value_str:
+                result['9M'] = qty_veh
+                return result
+            elif '12M' in value_str or ' 12M ' in value_str:
+                result['12M'] = qty_veh
+                return result
+    
+    # Method 4: Look for numeric patterns in part descriptions
+    part_desc = ""
+    for col in row.index:
+        if any(keyword in str(col).upper() for keyword in ['PART', 'DESC', 'NAME']):
+            if pd.notna(row[col]):
+                part_desc += str(row[col]).upper() + " "
+    
+    if part_desc:
+        if '7M' in part_desc or '7 M' in part_desc:
+            result['7M'] = qty_veh
+            return result
+        elif '9M' in part_desc or '9 M' in part_desc:
+            result['9M'] = qty_veh
+            return result
+        elif '12M' in part_desc or '12 M' in part_desc:
+            result['12M'] = qty_veh
+            return result
+    
+    # Method 5: If no specific model is detected, leave all boxes empty
+    # This prevents defaulting to any particular model
     return result
 
 def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None, status_placeholder=None):
