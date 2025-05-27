@@ -136,7 +136,6 @@ def parse_location_string(location_str):
     location_str = location_str.strip()
 
     # Try to parse location components
-    import re
     pattern = r'([^_\s]+)'
     matches = re.findall(pattern, location_str)
 
@@ -322,58 +321,36 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
     # Method 6: If still no model detected, return empty (no boxes filled)
     return result
 
-def debug_detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
-    """
-    Debug version that prints what it finds in each step
-    This helps troubleshoot bus model detection issues
-    """
-    print(f"\n=== DEBUG: Bus Model Detection ===")
-    print(f"Quantity column: {qty_veh_col}")
-    print(f"Bus model column: {bus_model_col}")
-    
-    # Print all row data for debugging
-    print("\nAll row data:")
-    for col, val in row.items():
-        if pd.notna(val):
-            print(f"  {col}: '{val}' (type: {type(val)})")
-    
-    # Get quantity value
-    qty_veh = ""
-    if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
-        qty_veh = str(row[qty_veh_col]).strip()
-    print(f"\nQuantity value: '{qty_veh}'")
-    
-    # Check for embedded model info in quantity
-    qty_pattern = r'(\d+M)[:\-\s]*(\d+)'
-    matches = re.findall(qty_pattern, qty_veh.upper())
-    if matches:
-        print(f"Found embedded model-quantity pairs: {matches}")
-    
-    # Check dedicated bus model column
-    if bus_model_col and bus_model_col in row and pd.notna(row[bus_model_col]):
-        bus_model_value = str(row[bus_model_col]).strip().upper()
-        print(f"Bus model column value: '{bus_model_value}'")
-    
-    # Search for models in all columns
-    print(f"\nSearching for bus models in all columns:")
-    for col, val in row.items():
-        if pd.notna(val):
-            val_str = str(val).upper()
-            models_found = []
-            if re.search(r'\b7M\b', val_str):
-                models_found.append('7M')
-            if re.search(r'\b9M\b', val_str):
-                models_found.append('9M')
-            if re.search(r'\b12M\b', val_str):
-                models_found.append('12M')
-            if models_found:
-                print(f"  {col}: Found models {models_found}")
-    
-    result = detect_bus_model_and_qty(row, qty_veh_col, bus_model_col)
-    print(f"\nFinal result: {result}")
-    print("=== END DEBUG ===\n")
-    
-    return result
+def load_dataframe(file_path):
+    """Load dataframe from file with multiple fallback methods"""
+    try:
+        # Try reading as Excel first
+        if file_path.lower().endswith(('.xlsx', '.xls')):
+            try:
+                df = pd.read_excel(file_path, engine='openpyxl')
+                return df
+            except Exception:
+                try:
+                    df = pd.read_excel(file_path, engine='xlrd')
+                    return df
+                except Exception:
+                    pass
+        
+        # Try reading as CSV with different encodings
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(file_path, encoding=encoding)
+                return df
+            except Exception:
+                continue
+        
+        # Last resort - try pandas default
+        df = pd.read_csv(file_path)
+        return df
+        
+    except Exception as e:
+        raise Exception(f"Could not read file: {str(e)}")
 
 def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None, status_placeholder=None):
     """Generate sticker labels with QR code from Excel data"""
@@ -399,16 +376,7 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, progress_bar=None,
 
     # Load the Excel data
     try:
-        if excel_file_path.lower().endswith('.csv'):
-            df = pd.read_csv(excel_file_path)
-        else:
-            try:
-                df = pd.read_excel(excel_file_path)
-            except Exception as e:
-                try:
-                    df = pd.read_excel(excel_file_path, engine='openpyxl')
-                except Exception as e2:
-                    df = pd.read_csv(excel_file_path, encoding='df = pd.read_csv(excel_file_path, encoding='utf-8')
+        df = load_dataframe(excel_file_path)
         
         if status_placeholder:
             status_placeholder.info(f"Data loaded successfully. Found {len(df)} rows.")
@@ -718,6 +686,20 @@ def main():
             - Location breakdown table
             - MTM (7M/9M/12M) quantity boxes
             """)
+    else:
+        st.info("👆 Please upload an Excel or CSV file to get started")
+        
+        # Sample data format
+        st.header("📊 Sample Data Format")
+        sample_data = {
+            'Part_No': ['ABC123', 'DEF456', 'GHI789'],
+            'Description': ['Engine Filter', 'Brake Pad', 'Oil Filter'],
+            'Location': ['A1_F1_S1_R1_C1_SH1_P1', 'B2_F2_S2_R2_C2_SH2_P2', 'C3_F3_S3_R3_C3_SH3_P3'],
+            'Quantity': ['5', '10', '7M:3'],
+            'Bus_Model': ['9M', '12M', '7M']
+        }
+        sample_df = pd.DataFrame(sample_data)
+        st.dataframe(sample_df)
 
 if __name__ == "__main__":
     main()
