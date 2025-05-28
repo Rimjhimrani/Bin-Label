@@ -651,7 +651,11 @@ def main():
     st.set_page_config(page_title="Sticker Label Generator", page_icon="🏷️", layout="wide")
     
     st.title("🏷️ Sticker Label Generator")
-    st.markdown("Generate professional sticker labels with QR codes from Excel/CSV data")
+    st.markdown(
+        "<p style='font-size:18px; font-style:italic; margin-top:-10px; text-align:left;'>"
+        "Designed and Developed by Agilomatrix</p>",
+        unsafe_allow_html=True
+    )
     
     # Sidebar for configuration
     st.sidebar.header("Configuration")
