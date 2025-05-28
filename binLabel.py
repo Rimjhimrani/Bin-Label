@@ -648,9 +648,9 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
 
 def main():
     """Main Streamlit application"""
-    st.set_page_config(page_title="Sticker Label Generator", page_icon="🏷️", layout="wide")
+    st.set_page_config(page_title="Bin Label Generator", page_icon="🏷️", layout="wide")
     
-    st.title("🏷️ Sticker Label Generator")
+    st.title("🏷️ Bin Label Generator")
     st.markdown(
         "<p style='font-size:18px; font-style:italic; margin-top:-10px; text-align:left;'>"
         "Designed and Developed by Agilomatrix</p>",
