@@ -656,6 +656,8 @@ def main():
         "Designed and Developed by Agilomatrix</p>",
         unsafe_allow_html=True
     )
+
+    st.markdown("---")
     
     # Sidebar for configuration
     st.sidebar.header("Configuration")
