@@ -103,7 +103,7 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
         return result
     
     # Method 1: Check if quantity already contains model info (e.g., "9M:2", "7M-3", "12M 5")
-    qty_pattern = r'(\d+M)[:\-\s]*(\d+)'
+    qty_pattern = r'(\d+M)[:\_\s]*(\d+)'
     matches = re.findall(qty_pattern, qty_veh.upper())
     
     if matches:
