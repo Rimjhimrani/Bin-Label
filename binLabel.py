@@ -267,8 +267,10 @@ def parse_location_string(location_str):
     if not location_str or not isinstance(location_str, str):
         return location_parts
 
-    # Remove any extra spaces
+    # Remove any extra spaces and handle NaN values
     location_str = location_str.strip()
+    if location_str.lower() in ['nan', 'none', 'null']:
+        return location_parts
 
     # Try to parse location components
     import re
@@ -277,9 +279,75 @@ def parse_location_string(location_str):
 
     # Fill the available parts
     for i, match in enumerate(matches[:7]):
-        location_parts[i] = match
+        if match.lower() not in ['nan', 'none', 'null']:
+            location_parts[i] = match
 
     return location_parts
+
+def extract_location_data_from_excel(row_data):
+    """Extract location data from Excel row for Line Location"""
+    # Get all available columns for debugging
+    available_cols = list(row_data.index) if hasattr(row_data, 'index') else []
+    
+    # Try different variations of column names (case-insensitive)
+    def find_column_value(possible_names, default=''):
+        for name in possible_names:
+            # Try exact match first
+            if name in row_data:
+                val = row_data[name]
+                return str(val) if pd.notna(val) and str(val).lower() != 'nan' else default
+            # Try case-insensitive match
+            for col in available_cols:
+                if isinstance(col, str) and col.upper() == name.upper():
+                    val = row_data[col]
+                    return str(val) if pd.notna(val) and str(val).lower() != 'nan' else default
+        return default
+    
+    # Extract values with multiple possible column names
+    bus_model = find_column_value(['Bus Model', 'Bus model', 'BUS MODEL', 'BUSMODEL', 'Bus_Model'])
+    station_no = find_column_value(['Station No', 'Station no', 'STATION NO', 'STATIONNO', 'Station_No'])
+    rack = find_column_value(['Rack', 'RACK', 'rack'])
+    rack_no_1st = find_column_value(['Rack No (1st digit)', 'RACK NO (1st digit)', 'Rack_No_1st', 'RACK_NO_1ST'])
+    rack_no_2nd = find_column_value(['Rack No (2nd digit)', 'RACK NO (2nd digit)', 'Rack_No_2nd', 'RACK_NO_2ND'])
+    level = find_column_value(['Level', 'LEVEL', 'level'])
+    cell = find_column_value(['Cell', 'CELL', 'cell'])
+    
+    return [bus_model, station_no, rack, rack_no_1st, rack_no_2nd, level, cell]
+
+
+def extract_store_location_data_from_excel(row_data):
+    """Extract store location data from Excel row for Store Location"""
+    def get_clean_value(possible_names, default=''):
+        """Get clean value from multiple possible column names"""
+        for name in possible_names:
+            # Try exact match first
+            if name in row_data:
+                val = row_data[name]
+                if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', '']:
+                    return str(val).strip()
+            # Try case-insensitive match
+            for col in row_data.index:
+                if isinstance(col, str) and col.upper() == name.upper():
+                    val = row_data[col]
+                    if pd.notna(val) and str(val).lower() not in ['nan', 'none', 'null', '']:
+                        return str(val).strip()
+        return default
+    
+    # Extract values with proper column name handling
+    # First cell: Station Name
+    station_name = get_clean_value(['Station Name', 'STATION NAME', 'Station_Name', 'STATIONNAME'], '')
+    
+    # Second cell: Store Location
+    store_location = get_clean_value(['Store Location', 'STORE LOCATION', 'Store_Location', 'STORELOCATION'], '')
+    
+    # Remaining cells: ABB values
+    zone = get_clean_value(['ABB ZONE', 'ABB_ZONE', 'ABBZONE'], '')
+    location = get_clean_value(['ABB LOCATION', 'ABB_LOCATION', 'ABBLOCATION'], '')
+    floor = get_clean_value(['ABB FLOOR', 'ABB_FLOOR', 'ABBFLOOR'], '')
+    rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'], '')
+    level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'], '')
+    
+    return [station_name, store_location, zone, location, floor, rack_no, level_in_rack]
 
 def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=None):
     """Generate sticker labels with QR code from Excel data"""
@@ -391,6 +459,27 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
 
     content_width = CONTENT_BOX_WIDTH - 0.2*cm
     all_elements = []
+    
+    # ✅ INSERT SORTING HERE
+    rack_col = next((col for col in df.columns if col.strip().lower() == 'rack'), None)
+    rack_no_1st_col = next((col for col in df.columns if '1st' in col.lower()), None)
+    rack_no_2nd_col = next((col for col in df.columns if '2nd' in col.lower()), None)
+
+    if rack_col and rack_no_1st_col and rack_no_2nd_col:
+        df[rack_no_1st_col] = pd.to_numeric(df[rack_no_1st_col], errors='coerce')
+        df[rack_no_2nd_col] = pd.to_numeric(df[rack_no_2nd_col], errors='coerce')
+
+        df.sort_values(
+            by=[rack_col, rack_no_1st_col, rack_no_2nd_col],
+            ascending=[False, False, False],
+            inplace=True
+        )
+    else:
+        if status_callback:
+            status_callback("⚠️ Sorting skipped: could not find all rack-related columns.")
+        else:
+            st.warning("⚠️ Sorting skipped: could not find all rack-related columns.")
+
 
     # Process each row as a single sticker
     total_rows = len(df)
@@ -458,30 +547,28 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
 
         elements.append(main_table)
 
-        # Store Location section
+       # Store Location section
         store_loc_label = Paragraph("Store Location", ParagraphStyle(
-            name='StoreLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
+        name='StoreLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
         ))
-
         # Total width for the 7 inner columns (2/3 of full content width)
         inner_table_width = content_width * 2 / 3
-        
+
         # Define proportional widths - same as Line Location for consistency
-        col_proportions = [1.5, 2, 0.7, 0.8, 1, 1, 0.9]
+        col_proportions = [1.5, 2.5, 0.7, 0.8, 0.8, 0.7, 0.9]
         total_proportion = sum(col_proportions)
-        
+
         # Calculate column widths based on proportions 
         inner_col_widths = [w * inner_table_width / total_proportion for w in col_proportions]
 
-        # Use store_location if available, otherwise use empty values
-        store_loc_values = parse_location_string(store_location) if store_location else ["", "", "", "", "", "", ""]
+        # Extract store location values from Excel data
+        store_loc_values = extract_store_location_data_from_excel(row)
 
         store_loc_inner_table = Table(
             [store_loc_values],
             colWidths=inner_col_widths,
             rowHeights=[location_row_height]
         )
-
         store_loc_inner_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -489,35 +576,30 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make store location values bold
             ('FONTSIZE', (0, 0), (-1, -1), 9),
         ]))
-
         store_loc_table = Table(
             [[store_loc_label, store_loc_inner_table]],
             colWidths=[content_width/3, inner_table_width],
             rowHeights=[location_row_height]
         )
-
         store_loc_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
-
         elements.append(store_loc_table)
 
         # Line Location section
         line_loc_label = Paragraph("Line Location", ParagraphStyle(
             name='LineLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
         ))
-        
-        # The inner table width is already calculated above
-        
+        # Extract line location values from Excel data
+        location_parts = extract_location_data_from_excel(row)
         # Create the inner table
         line_loc_inner_table = Table(
             [location_parts],
             colWidths=inner_col_widths,
             rowHeights=[location_row_height]
         )
-        
         line_loc_inner_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -525,22 +607,18 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make line location values bold
             ('FONTSIZE', (0, 0), (-1, -1), 9)
         ]))
-        
         # Wrap the label and the inner table in a containing table
         line_loc_table = Table(
             [[line_loc_label, line_loc_inner_table]],
             colWidths=[content_width/3, inner_table_width],
             rowHeights=[location_row_height]
         )
-
         line_loc_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
-
         elements.append(line_loc_table)
-
         # Add smaller spacer between line location and bottom section
         elements.append(Spacer(1, 0.3*cm))
 
