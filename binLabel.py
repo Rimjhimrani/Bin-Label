@@ -97,8 +97,13 @@ def detect_bus_model_and_qty(row, qty_veh_col, bus_model_col=None):
     # Get quantity value
     qty_veh = ""
     if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
-        qty_veh = str(row[qty_veh_col]).strip()
-    
+        qty_veh_raw = row[qty_veh_col]
+        if pd.notna(qty_veh_raw):
+            if isinstance(qty_veh_raw, float) and qty_veh_raw.is_integer():
+                qty_veh = str(int(qty_veh_raw))  # Show as whole number
+            else:
+                qty_veh = str(qty_veh_raw).strip()  # Keep decimal if present
+
     if not qty_veh:
         return result
     
@@ -594,6 +599,10 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         ))
         # Extract line location values from Excel data
         location_parts = extract_location_data_from_excel(row)
+        location_parts = [
+            str(int(float(val))) if isinstance(val, str) and re.match(r'^\d+\.0$', val) else val
+            for val in location_parts
+        ]
         # Create the inner table
         line_loc_inner_table = Table(
             [location_parts],
