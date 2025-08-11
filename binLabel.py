@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from reportlab.lib.pagesizes import landscape
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph, PageBreak, Image
 from reportlab.lib.units import cm, inch
@@ -14,14 +14,14 @@ import sys
 import re
 import tempfile
 
-# Define sticker dimensions
-STICKER_WIDTH = 10 * cm
-STICKER_HEIGHT = 15 * cm
-STICKER_PAGESIZE = (STICKER_WIDTH, STICKER_HEIGHT)
+# Define sticker dimensions - Updated to match template
+STICKER_WIDTH = 18 * cm
+STICKER_HEIGHT = 8 * cm
+STICKER_PAGESIZE = A4  # Changed to A4
 
 # Define content box dimensions
-CONTENT_BOX_WIDTH = 10 * cm  # Same width as page
-CONTENT_BOX_HEIGHT = 7.2 * cm  # Half the page height
+CONTENT_BOX_WIDTH = 18 * cm
+CONTENT_BOX_HEIGHT = 8 * cm
 
 # Check for PIL and install if needed
 try:
@@ -46,9 +46,9 @@ except ImportError:
     QR_AVAILABLE = True
 
 # Define paragraph styles
-bold_style = ParagraphStyle(name='Bold', fontName='Helvetica-Bold', fontSize=16, alignment=TA_CENTER, leading=14)
-desc_style = ParagraphStyle(name='Description', fontName='Helvetica', fontSize=11, alignment=TA_CENTER, leading=12)
-qty_style = ParagraphStyle(name='Quantity', fontName='Helvetica', fontSize=11, alignment=TA_CENTER, leading=12)
+bold_style = ParagraphStyle(name='Bold', fontName='Helvetica-Bold', fontSize=18, alignment=TA_CENTER, leading=16)
+desc_style = ParagraphStyle(name='Description', fontName='Helvetica', fontSize=14, alignment=TA_CENTER, leading=14)
+qty_style = ParagraphStyle(name='Quantity', fontName='Helvetica', fontSize=14, alignment=TA_CENTER, leading=14)
 
 def find_bus_model_column(df_columns):
     """
@@ -264,62 +264,6 @@ def generate_qr_code(data_string):
         traceback.print_exc()
         return None
 
-def parse_location_string(location_str):
-    """Parse a location string into components for table display"""
-    # Initialize with empty values
-    location_parts = [''] * 7
-
-    if not location_str or not isinstance(location_str, str):
-        return location_parts
-
-    # Remove any extra spaces and handle NaN values
-    location_str = location_str.strip()
-    if location_str.lower() in ['nan', 'none', 'null']:
-        return location_parts
-
-    # Try to parse location components
-    import re
-    pattern = r'([^_\s]+)'
-    matches = re.findall(pattern, location_str)
-
-    # Fill the available parts
-    for i, match in enumerate(matches[:7]):
-        if match.lower() not in ['nan', 'none', 'null']:
-            location_parts[i] = match
-
-    return location_parts
-
-def extract_location_data_from_excel(row_data):
-    """Extract location data from Excel row for Line Location"""
-    # Get all available columns for debugging
-    available_cols = list(row_data.index) if hasattr(row_data, 'index') else []
-    
-    # Try different variations of column names (case-insensitive)
-    def find_column_value(possible_names, default=''):
-        for name in possible_names:
-            # Try exact match first
-            if name in row_data:
-                val = row_data[name]
-                return str(val) if pd.notna(val) and str(val).lower() != 'nan' else default
-            # Try case-insensitive match
-            for col in available_cols:
-                if isinstance(col, str) and col.upper() == name.upper():
-                    val = row_data[col]
-                    return str(val) if pd.notna(val) and str(val).lower() != 'nan' else default
-        return default
-    
-    # Extract values with multiple possible column names
-    bus_model = find_column_value(['Bus Model', 'Bus model', 'BUS MODEL', 'BUSMODEL', 'Bus_Model'])
-    station_no = find_column_value(['Station No', 'Station no', 'STATION NO', 'STATIONNO', 'Station_No'])
-    rack = find_column_value(['Rack', 'RACK', 'rack'])
-    rack_no_1st = find_column_value(['Rack No (1st digit)', 'RACK NO (1st digit)', 'Rack_No_1st', 'RACK_NO_1ST'])
-    rack_no_2nd = find_column_value(['Rack No (2nd digit)', 'RACK NO (2nd digit)', 'Rack_No_2nd', 'RACK_NO_2ND'])
-    level = find_column_value(['Level', 'LEVEL', 'level'])
-    cell = find_column_value(['Cell', 'CELL', 'cell'])
-    
-    return [bus_model, station_no, rack, rack_no_1st, rack_no_2nd, level, cell]
-
-
 def extract_store_location_data_from_excel(row_data):
     """Extract store location data from Excel row for Store Location"""
     def get_clean_value(possible_names, default=''):
@@ -338,24 +282,22 @@ def extract_store_location_data_from_excel(row_data):
                         return str(val).strip()
         return default
     
-    # Extract values with proper column name handling
-    # First cell: Station Name
-    station_name = get_clean_value(['Station Name', 'STATION NAME', 'Station_Name', 'STATIONNAME'], '')
+    # Extract values for store location - Updated based on template
+    # The template shows: Mez-c G+1 R 0 1 A 0 1
+    # So we need 8 columns for store location
+    store_loc_1 = get_clean_value(['Store Loc 1', 'STORE_LOC_1', 'Station Name', 'STATION NAME'], '')
+    store_loc_2 = get_clean_value(['Store Loc 2', 'STORE_LOC_2', 'Store Location', 'STORE LOCATION'], '')
+    store_loc_3 = get_clean_value(['Store Loc 3', 'STORE_LOC_3', 'ABB ZONE', 'Zone'], '')
+    store_loc_4 = get_clean_value(['Store Loc 4', 'STORE_LOC_4', 'ABB LOCATION', 'Location'], '')
+    store_loc_5 = get_clean_value(['Store Loc 5', 'STORE_LOC_5', 'ABB FLOOR', 'Floor'], '')
+    store_loc_6 = get_clean_value(['Store Loc 6', 'STORE_LOC_6', 'ABB RACK NO', 'Rack'], '')
+    store_loc_7 = get_clean_value(['Store Loc 7', 'STORE_LOC_7', 'ABB LEVEL', 'Level'], '')
+    store_loc_8 = get_clean_value(['Store Loc 8', 'STORE_LOC_8', 'ABB CELL', 'Cell'], '')
     
-    # Second cell: Store Location
-    store_location = get_clean_value(['Store Location', 'STORE LOCATION', 'Store_Location', 'STORELOCATION'], '')
-    
-    # Remaining cells: ABB values
-    zone = get_clean_value(['ABB ZONE', 'ABB_ZONE', 'ABBZONE'], '')
-    location = get_clean_value(['ABB LOCATION', 'ABB_LOCATION', 'ABBLOCATION'], '')
-    floor = get_clean_value(['ABB FLOOR', 'ABB_FLOOR', 'ABBFLOOR'], '')
-    rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'], '')
-    level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'], '')
-    
-    return [station_name, store_location, zone, location, floor, rack_no, level_in_rack]
+    return [store_loc_1, store_loc_2, store_loc_3, store_loc_4, store_loc_5, store_loc_6, store_loc_7, store_loc_8]
 
 def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=None):
-    """Generate sticker labels with QR code from Excel data"""
+    """Generate sticker labels with QR code from Excel data - Updated for A4 and new template"""
     if status_callback:
         status_callback(f"Processing file: {excel_file_path}")
     else:
@@ -364,16 +306,15 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
     # Create a function to draw the border box around content
     def draw_border(canvas, doc):
         canvas.saveState()
-        # Draw border box around the content area (10cm x 7.5cm)
-        # Position it at the top of the page with minimal margin
-        x_offset = (STICKER_WIDTH - CONTENT_BOX_WIDTH) / 2
-        y_offset = STICKER_HEIGHT - CONTENT_BOX_HEIGHT - 0.2*cm  # Position at top with minimal margin
-        canvas.setStrokeColor(colors.Color(0, 0, 0, alpha=0.95))  # Slightly darker black (95% opacity)
-        canvas.setLineWidth(1.8)  # Slightly thicker border
+        # Draw border box around the content area - centered on A4 page
+        x_offset = (A4[0] - CONTENT_BOX_WIDTH) / 2  # Center horizontally
+        y_offset = (A4[1] - CONTENT_BOX_HEIGHT) / 2  # Center vertically
+        canvas.setStrokeColor(colors.Color(0, 0, 0, alpha=0.95))
+        canvas.setLineWidth(2)
         canvas.rect(
-            x_offset + doc.leftMargin,
+            x_offset,
             y_offset,
-            CONTENT_BOX_WIDTH - 0.2*cm,  # Account for margins
+            CONTENT_BOX_WIDTH,
             CONTENT_BOX_HEIGHT
         )
         canvas.restoreState()
@@ -417,30 +358,23 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
     desc_col = next((col for col in cols if 'DESC' in col),
                    next((col for col in cols if 'NAME' in col), cols[1] if len(cols) > 1 else part_no_col))
 
-    # Look specifically for "QTY/BIN" column first, then fall back to general QTY column
-    qty_bin_col = next((col for col in cols if 'QTY/BIN' in col or 'QTY_BIN' in col or 'QTYBIN' in col), 
-                  next((col for col in cols if 'QTY' in col and 'BIN' in col), None))
+    # Look for "Max capacity" or similar columns instead of "QTY/BIN"
+    max_capacity_col = next((col for col in cols if 'MAX' in col and 'CAPACITY' in col), 
+                           next((col for col in cols if 'CAPACITY' in col),
+                           next((col for col in cols if 'QTY' in col), None)))
     
-    # If no specific QTY/BIN column is found, fall back to general QTY column
-    if not qty_bin_col:
-        qty_bin_col = next((col for col in cols if 'QTY' in col),
-                      next((col for col in cols if 'QUANTITY' in col), None))
-  
-    loc_col = next((col for col in cols if 'LOC' in col or 'POS' in col or 'LOCATION' in col),
-                   cols[2] if len(cols) > 2 else desc_col)
-
-    # Improved detection of QTY/VEH column
-    qty_veh_col = next((col for col in cols if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH', 'QTYPERCAR', 'QTYCAR', 'QTY/CAR'])), None)
-
     # Look for store location column
     store_loc_col = next((col for col in cols if 'STORE' in col and 'LOC' in col),
                       next((col for col in cols if 'STORELOCATION' in col), None))
+
+    # Improved detection of QTY/VEH column
+    qty_veh_col = next((col for col in cols if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH', 'QTYPERCAR', 'QTYCAR', 'QTY/CAR'])), None)
 
     # Find bus model column using the enhanced detection function
     bus_model_col = find_bus_model_column(original_columns)
 
     if status_callback:
-        status_callback(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Location: {loc_col}, Qty/Bin: {qty_bin_col}")
+        status_callback(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Max Capacity: {max_capacity_col}")
         if qty_veh_col:
             status_callback(f"Qty/Veh Column: {qty_veh_col}")
         if store_loc_col:
@@ -448,7 +382,7 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         if bus_model_col:
             status_callback(f"Bus Model Column: {bus_model_col}")
     else:
-        st.write(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Location: {loc_col}, Qty/Bin: {qty_bin_col}")
+        st.write(f"Using columns: Part No: {part_no_col}, Description: {desc_col}, Max Capacity: {max_capacity_col}")
         if qty_veh_col:
             st.write(f"Qty/Veh Column: {qty_veh_col}")
         if store_loc_col:
@@ -456,35 +390,15 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         if bus_model_col:
             st.write(f"Bus Model Column: {bus_model_col}")
 
-    # Create document with minimal margins
-    doc = SimpleDocTemplate(output_pdf_path, pagesize=STICKER_PAGESIZE,
-                          topMargin=0.2*cm,  # Minimal top margin
-                          bottomMargin=(STICKER_HEIGHT - CONTENT_BOX_HEIGHT - 0.2*cm),  # Adjust bottom margin accordingly
-                          leftMargin=0.1*cm, rightMargin=0.1*cm)
+    # Create document with A4 page size and proper margins for centering
+    doc = SimpleDocTemplate(output_pdf_path, pagesize=A4,
+                          topMargin=(A4[1] - CONTENT_BOX_HEIGHT) / 2,
+                          bottomMargin=(A4[1] - CONTENT_BOX_HEIGHT) / 2,
+                          leftMargin=(A4[0] - CONTENT_BOX_WIDTH) / 2,
+                          rightMargin=(A4[0] - CONTENT_BOX_WIDTH) / 2)
 
-    content_width = CONTENT_BOX_WIDTH - 0.2*cm
+    content_width = CONTENT_BOX_WIDTH - 0.4*cm
     all_elements = []
-    
-    # ✅ INSERT SORTING HERE
-    rack_col = next((col for col in df.columns if col.strip().lower() == 'rack'), None)
-    rack_no_1st_col = next((col for col in df.columns if '1st' in col.lower()), None)
-    rack_no_2nd_col = next((col for col in df.columns if '2nd' in col.lower()), None)
-
-    if rack_col and rack_no_1st_col and rack_no_2nd_col:
-        df[rack_no_1st_col] = pd.to_numeric(df[rack_no_1st_col], errors='coerce')
-        df[rack_no_2nd_col] = pd.to_numeric(df[rack_no_2nd_col], errors='coerce')
-
-        df.sort_values(
-            by=[rack_col, rack_no_1st_col, rack_no_2nd_col],
-            ascending=[False, False, False],
-            inplace=True
-        )
-    else:
-        if status_callback:
-            status_callback("⚠️ Sorting skipped: could not find all rack-related columns.")
-        else:
-            st.warning("⚠️ Sorting skipped: could not find all rack-related columns.")
-
 
     # Process each row as a single sticker
     total_rows = len(df)
@@ -499,68 +413,67 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         part_no = str(row[part_no_col])
         desc = str(row[desc_col])
         
-        # Extract QTY/BIN properly
-        qty_bin = ""
-        if qty_bin_col and qty_bin_col in row and pd.notna(row[qty_bin_col]):
-            qty_bin = str(row[qty_bin_col])
+        # Extract Max capacity
+        max_capacity = ""
+        if max_capacity_col and max_capacity_col in row and pd.notna(row[max_capacity_col]):
+            max_capacity = str(row[max_capacity_col])
             
         # Extract QTY/VEH properly
         qty_veh = ""
         if qty_veh_col and qty_veh_col in row and pd.notna(row[qty_veh_col]):
             qty_veh = str(row[qty_veh_col])
         
-        location_str = str(row[loc_col]) if loc_col and loc_col in row else ""
         store_location = str(row[store_loc_col]) if store_loc_col and store_loc_col in row else ""
-        location_parts = parse_location_string(location_str)
 
         # Use enhanced bus model detection
         mtm_quantities = detect_bus_model_and_qty(row, qty_veh_col, bus_model_col)
 
         # Generate QR code with part information
-        qr_data = f"Part No: {part_no}\nDescription: {desc}\nLocation: {location_str}\n"
-        qr_data += f"Store Location: {store_location}\nQTY/VEH: {qty_veh}\nQTY/BIN: {qty_bin}"
+        qr_data = f"Part No: {part_no}\nDescription: {desc}\nMax Capacity: {max_capacity}\n"
+        qr_data += f"Store Location: {store_location}\nQTY/VEH: {qty_veh}"
         
         qr_image = generate_qr_code(qr_data)
         if status_callback and qr_image:
             status_callback(f"QR code generated for part: {part_no}")
         
-        # Define row heights
-        header_row_height = 0.9*cm
-        desc_row_height = 1.0*cm
-        qty_row_height = 0.5*cm
-        location_row_height = 0.5*cm
+        # Define row heights - adjusted for larger sticker
+        header_row_height = 1.2*cm
+        desc_row_height = 1.4*cm
+        max_capacity_row_height = 1.0*cm
+        store_loc_row_height = 1.2*cm
 
-        # Main table data
+        # Main table data - Updated to use "Max capacity" instead of "Qty/Bin"
         main_table_data = [
             ["Part No", Paragraph(f"{part_no}", bold_style)],
-            ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, desc_style)],
-            ["Qty/Bin", Paragraph(str(qty_bin), qty_style)]
+            ["Description", Paragraph(desc[:60] + "..." if len(desc) > 60 else desc, desc_style)],
+            ["Max capacity", Paragraph(str(max_capacity), qty_style)]
         ]
 
         # Create main table
         main_table = Table(main_table_data,
                          colWidths=[content_width/3, content_width*2/3],
-                         rowHeights=[header_row_height, desc_row_height, qty_row_height])
+                         rowHeights=[header_row_height, desc_row_height, max_capacity_row_height])
 
         main_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 2, colors.Color(0, 0, 0, alpha=0.95)),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (0, -1), 11),
+            ('FONTSIZE', (0, 0), (0, -1), 14),
         ]))
 
         elements.append(main_table)
 
-       # Store Location section
+        # Store Location section - Updated for 8 columns as per template
         store_loc_label = Paragraph("Store Location", ParagraphStyle(
-        name='StoreLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
+            name='StoreLoc', fontName='Helvetica-Bold', fontSize=14, alignment=TA_CENTER
         ))
-        # Total width for the 7 inner columns (2/3 of full content width)
+        
+        # Total width for the 8 inner columns
         inner_table_width = content_width * 2 / 3
 
-        # Define proportional widths - same as Line Location for consistency
-        col_proportions = [1.5, 2.5, 0.7, 0.8, 0.8, 0.7, 0.9]
+        # Define proportional widths for 8 columns
+        col_proportions = [1.2, 1.2, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
         total_proportion = sum(col_proportions)
 
         # Calculate column widths based on proportions 
@@ -572,81 +485,47 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         store_loc_inner_table = Table(
             [store_loc_values],
             colWidths=inner_col_widths,
-            rowHeights=[location_row_height]
+            rowHeights=[store_loc_row_height]
         )
         store_loc_inner_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 2, colors.Color(0, 0, 0, alpha=0.95)),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make store location values bold
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 12),
         ]))
+        
         store_loc_table = Table(
             [[store_loc_label, store_loc_inner_table]],
             colWidths=[content_width/3, inner_table_width],
-            rowHeights=[location_row_height]
+            rowHeights=[store_loc_row_height]
         )
         store_loc_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 2, colors.Color(0, 0, 0, alpha=0.95)),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         elements.append(store_loc_table)
 
-        # Line Location section
-        line_loc_label = Paragraph("Line Location", ParagraphStyle(
-            name='LineLoc', fontName='Helvetica-Bold', fontSize=11, alignment=TA_CENTER
-        ))
-        # Extract line location values from Excel data
-        location_parts = extract_location_data_from_excel(row)
-        location_parts = [
-            str(int(float(val))) if isinstance(val, str) and re.match(r'^\d+\.0$', val) else val
-            for val in location_parts
-        ]
-        # Create the inner table
-        line_loc_inner_table = Table(
-            [location_parts],
-            colWidths=inner_col_widths,
-            rowHeights=[location_row_height]
-        )
-        line_loc_inner_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),  # Make line location values bold
-            ('FONTSIZE', (0, 0), (-1, -1), 9)
-        ]))
-        # Wrap the label and the inner table in a containing table
-        line_loc_table = Table(
-            [[line_loc_label, line_loc_inner_table]],
-            colWidths=[content_width/3, inner_table_width],
-            rowHeights=[location_row_height]
-        )
-        line_loc_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]))
-        elements.append(line_loc_table)
-        # Add smaller spacer between line location and bottom section
-        elements.append(Spacer(1, 0.3*cm))
+        # Add spacer before bottom section
+        elements.append(Spacer(1, 0.5*cm))
 
-        # Bottom section - Enhanced with intelligent bus model detection
-        mtm_box_width = 1.2*cm
-        mtm_row_height = 1.5*cm
+        # Bottom section - MTM boxes and QR code
+        mtm_box_width = 2*cm
+        mtm_row_height = 2*cm
 
         # Create MTM boxes with detected quantities
         position_matrix_data = [
             ["7M", "9M", "12M"],
             [
                 Paragraph(f"<b>{mtm_quantities['7M']}</b>", ParagraphStyle(
-                    name='Bold7M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                    name='Bold7M', fontName='Helvetica-Bold', fontSize=14, alignment=TA_CENTER
                 )) if mtm_quantities['7M'] else "",
                 Paragraph(f"<b>{mtm_quantities['9M']}</b>", ParagraphStyle(
-                    name='Bold9M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                    name='Bold9M', fontName='Helvetica-Bold', fontSize=14, alignment=TA_CENTER
                 )) if mtm_quantities['9M'] else "",
                 Paragraph(f"<b>{mtm_quantities['12M']}</b>", ParagraphStyle(
-                    name='Bold12M', fontName='Helvetica-Bold', fontSize=10, alignment=TA_CENTER
+                    name='Bold12M', fontName='Helvetica-Bold', fontSize=14, alignment=TA_CENTER
                 )) if mtm_quantities['12M'] else ""
             ]
         ]
@@ -658,18 +537,21 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         )
 
         mtm_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1.2, colors.Color(0, 0, 0, alpha=0.95)),  # Darker grid lines
+            ('GRID', (0, 0), (-1, -1), 2, colors.Color(0, 0, 0, alpha=0.95)),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTSIZE', (0, 0), (-1, -1), 12),
         ]))
 
-        # QR code with preserved size
-        qr_width = 2.5*cm
-        qr_height = 2.5*cm
+        # QR code - larger size for bigger sticker
+        qr_width = 3*cm
+        qr_height = 3*cm
 
         if qr_image:
+            # Update QR image size
+            qr_image.drawWidth = qr_width
+            qr_image.drawHeight = qr_height
             qr_table = Table(
                 [[qr_image]],
                 colWidths=[qr_width],
@@ -678,7 +560,7 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         else:
             qr_table = Table(
                 [[Paragraph("QR", ParagraphStyle(
-                    name='QRPlaceholder', fontName='Helvetica-Bold', fontSize=12, alignment=TA_CENTER
+                    name='QRPlaceholder', fontName='Helvetica-Bold', fontSize=16, alignment=TA_CENTER
                 ))]],
                 colWidths=[qr_width],
                 rowHeights=[qr_height]
@@ -689,15 +571,15 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
 
-        # Adjust spacing for better layout
-        left_spacer_width = 0.8*cm
-        right_spacer_width = content_width - 3*mtm_box_width - qr_width - left_spacer_width
+        # Calculate spacing for bottom row
+        total_mtm_width = 3 * mtm_box_width
+        spacer_width = content_width - total_mtm_width - qr_width
 
-        # Combine MTM boxes and QR code in one row with better spacing
+        # Combine MTM boxes and QR code in one row
         bottom_row = Table(
-            [[mtm_table, "", qr_table, ""]],
-            colWidths=[3*mtm_box_width, left_spacer_width, qr_width, right_spacer_width],
-            rowHeights=[qr_height]
+            [[mtm_table, "", qr_table]],
+            colWidths=[total_mtm_width, spacer_width, qr_width],
+            rowHeights=[max(mtm_row_height, qr_height)]
         )
 
         bottom_row.setStyle(TableStyle([
@@ -800,11 +682,10 @@ def main():
             desc_col = next((col for col in cols_upper if 'DESC' in col),
                            next((col for col in cols_upper if 'NAME' in col), cols_upper[1] if len(cols_upper) > 1 else ''))
             
-            qty_bin_col = next((col for col in cols_upper if 'QTY/BIN' in col or 'QTY_BIN' in col or 'QTYBIN' in col), 
-                              next((col for col in cols_upper if 'QTY' in col and 'BIN' in col), 
+            # Look for Max capacity column instead of Qty/Bin
+            max_capacity_col = next((col for col in cols_upper if 'MAX' in col and 'CAPACITY' in col), 
+                                   next((col for col in cols_upper if 'CAPACITY' in col),
                                    next((col for col in cols_upper if 'QTY' in col), '')))
-            
-            loc_col = next((col for col in cols_upper if 'LOC' in col or 'POS' in col or 'LOCATION' in col), '')
             
             qty_veh_col = next((col for col in cols_upper if any(term in col for term in ['QTY/VEH', 'QTY_VEH', 'QTY PER VEH', 'QTYVEH'])), '')
             
@@ -816,12 +697,12 @@ def main():
             with col1:
                 st.info(f"**Part Number Column:** {part_no_col}")
                 st.info(f"**Description Column:** {desc_col}")
-                st.info(f"**Location Column:** {loc_col}")
+                st.info(f"**Max Capacity Column:** {max_capacity_col}")
                 
             with col2:
-                st.info(f"**Qty/Bin Column:** {qty_bin_col}")
                 st.info(f"**Qty/Vehicle Column:** {qty_veh_col if qty_veh_col else 'Not detected'}")
                 st.info(f"**Bus Model Column:** {bus_model_col if bus_model_col else 'Not detected'}")
+                st.info(f"**Store Location:** Available in multiple columns")
             
         except Exception as e:
             st.error(f"Error analyzing columns: {e}")
@@ -906,11 +787,11 @@ def main():
         with info_col1:
             st.markdown("""
             **Label Features:**
-            - 📏 Standard sticker size (10cm x 15cm)
+            - 📏 A4 page with 18cm x 8cm stickers
             - 🔢 QR code for each part
-            - 📍 Location tracking
+            - 📍 Store location tracking (8 fields)
             - 🚌 Bus model detection (7M, 9M, 12M)
-            - 📦 Quantity per bin/vehicle
+            - 📦 Max capacity field
             """)
         
         with info_col2:
@@ -918,11 +799,10 @@ def main():
             **Supported Columns:**
             - Part Number/Part No
             - Description/Name
-            - Location/Position
-            - Qty/Bin, Quantity
+            - Max Capacity/Capacity
             - Qty/Veh, Qty per Vehicle
             - Bus Model/Vehicle Type
-            - Store Location
+            - Store Location (multiple fields)
             """)
     
     else:
@@ -940,21 +820,23 @@ def main():
         
         st.subheader("💡 Tips")
         st.markdown("""
-        - Use clear column headers like "Part No", "Description", "Location"
+        - Use clear column headers like "Part No", "Description", "Max Capacity"
         - For bus models, use "7M", "9M", "12M" format
-        - Include quantity information in "Qty/Bin" or "Qty/Veh" columns
-        - Location strings will be automatically parsed into components
+        - Include quantity information in "Qty/Veh" columns
+        - Store location will be distributed across 8 fields automatically
         """)
         
         # Sample data format
         st.subheader("📊 Sample Data Format")
         sample_data = pd.DataFrame({
-            'Part No': ['ABC123', 'DEF456', 'GHI789'],
-            'Description': ['Engine Filter', 'Brake Pad Set', 'Oil Filter'],
-            'Location': ['A1_B2_C3', 'D4_E5_F6', 'G7_H8_I9'],
-            'Qty/Bin': [5, 10, 8],
+            'Part No': ['AA0107020000', 'DEF456', 'GHI789'],
+            'Description': ['REAR SUSPENSION-WIL', 'Brake Pad Set', 'Oil Filter'],
+            'Max Capacity': [9, 10, 8],
             'Qty/Veh': [2, 4, 1],
-            'Bus Model': ['9M', '12M', '7M']
+            'Bus Model': ['12M', '9M', '7M'],
+            'Store Loc 1': ['Mez-c', 'G+1', 'B1'],
+            'Store Loc 2': ['G+1', 'R2', 'L3'],
+            'Store Loc 3': ['R', 'A', 'B']
         })
         st.dataframe(sample_data, use_container_width=True)
 
