@@ -560,7 +560,7 @@ def generate_sticker_labels(excel_file_path, output_pdf_path, status_callback=No
         inner_table_width = content_width * 2 / 3
 
         # Define proportional widths - same as Line Location for consistency
-        col_proportions = [1.7, 2.5, 0.7, 0.7, 0.7, 0.7, 0.9]
+        col_proportions = [1.8, 2.4, 0.7, 0.7, 0.7, 0.7, 0.9]
         total_proportion = sum(col_proportions)
 
         # Calculate column widths based on proportions 
@@ -960,4 +960,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
